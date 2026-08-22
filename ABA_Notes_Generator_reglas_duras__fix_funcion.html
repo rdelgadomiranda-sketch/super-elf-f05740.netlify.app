@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-02z · en 97155 actua el equipo terapeutico, el cuidador solo esta presente</div>
+  build 2026-08-03a · las metas propias de la 97156 vuelven a aparecer y a entrar en el prompt</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -3017,11 +3017,18 @@ function selectGoals(ntId) {
 
 function goalsString(g, directSession) {
   if (!g) return '';
-  if (g._custom) return g.g1 || '';
+  /* EL TIPO MANDA SOBRE _custom. Las metas a mano de una 97156 se guardan en p156
+     ({type:'97156', p156:[texto], _custom:true}), pero la rama _custom estaba
+     ANTES y devolvia g.g1 — un campo que ese objeto no tiene. Resultado: en cuanto
+     se escribian metas propias en una 97156, la cadena salia vacia, el bloque de
+     Goals desaparecia de la pantalla Y las metas tampoco llegaban al prompt, asi
+     que la nota se generaba sin ellas. La rama _custom es de las 97155, donde el
+     texto si vive en g1: se conserva, pero despues del tipo. */
   if (g.type === '97156') {
     const p = g.p156;
-    return Array.isArray(p) ? p.join('; ') : (p || '');
+    return Array.isArray(p) ? p.filter(Boolean).join('; ') : (p || '');
   }
+  if (g._custom) return g.g1 || '';
   if (g.type === 'supervision') return '';
   // Direct sessions NEVER include g3 — no supervisee direction goals
   const fields = directSession ? [g.g1, g.g2, g.g4] : [g.g1, g.g2, g.g3, g.g4];
@@ -13993,7 +14000,9 @@ async function generateSession(freqCounts, trialCounts, prevPlanText){
     const servicesTxt = k==='97155'
       ? (t.caspSections ? caspSectionsToServicesList(t.caspSections) : (t.sessTmpl ? sessionTemplateToServicesList(t.sessTmpl) : ''))
       : '';
-    return makeOutputBlock(k,codeLabelMap[k]+` · ${t.dur}`,meta,goalsTxt,servicesTxt, k==='97153', k==='97155');
+    // Sin duracion, la cabecera quedaba en "CPT-97156 · " con el separador colgando,
+    // que se lee como un campo que no cargo. El separador solo aparece si hay valor.
+    return makeOutputBlock(k,codeLabelMap[k]+(t.dur?` · ${t.dur}`:''),meta,goalsTxt,servicesTxt, k==='97153', k==='97155');
   }).join('');
   container.scrollIntoView({behavior:'smooth',block:'start'});
   document.getElementById('highlightLegend').style.display='block';
