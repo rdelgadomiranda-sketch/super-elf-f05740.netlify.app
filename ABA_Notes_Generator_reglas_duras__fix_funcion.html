@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-03a · las metas propias de la 97156 vuelven a aparecer y a entrar en el prompt</div>
+  build 2026-08-23e · 97153: cambio ambiental con atribución correcta (no siempre "the caregiver reported") + se integra en el cuerpo; intervenciones restringidas a la lista documentada por conducta del plan (prohibido agregar Redirection/Modeling/Premack fuera del plan)</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -310,6 +310,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
     <button class="tab" id="tab-btn-sup" onclick="switchTab('sup')">[ SUP LOG ]</button>
     <button class="tab" id="tab-btn-monthly" onclick="switchTab('monthly')">[ MONTHLY ]</button>
     <button class="tab" id="tab-btn-abamatrix" onclick="switchTab('abamatrix')">[ ABAMATRIX ]</button>
+    <button class="tab" id="tab-btn-review" onclick="switchTab('review')">[ REVISAR NOTA ]</button>
   </div>
 
   <!-- ══════════ THERAPIST TAB ══════════ -->
@@ -1735,6 +1736,39 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
         </div>
 
       </details>
+    </div>
+  </div>
+
+  <div id="tab-review" style="display:none">
+    <div class="card">
+      <h2 style="margin-top:0">Revisar nota de RBT</h2>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;line-height:1.5">Selecciona el terapeuta y el cliente, pega la nota 97153 del RBT (venga de donde venga) y el sistema la revisa contra la información de ESE cliente: reglas clínicas, terminología prohibida, cero fabricación, correspondencia reforzador\u2013función (MFC) y §59G-4.125. Con "Revisar nota" obtienes OK o sugerencias; con "Reescribir con correcciones" el sistema devuelve la misma nota con los errores corregidos (sin inventar nada, solo con la info del cliente).</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px">
+        <div class="field"><label>Therapist</label><select id="reviewTherapistSel" onchange="_reviewRefreshClientSelect()"></select></div>
+        <div class="field"><label>Client</label><select id="reviewClientSel" onchange="_reviewOnClientChange()"></select></div>
+      </div>
+
+      <div style="margin-top:14px">
+        <textarea id="reviewNoteIn" rows="14" placeholder="Pega aquí la nota del RBT a revisar..." style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+          <button class="btn btn-primary" id="reviewBtn" onclick="_lockDuring('_abaReviewRbtNote','la revisión de la nota del RBT','review')" style="padding:6px 16px;font-size:12px">Revisar nota</button>
+          <button class="btn btn-outline" id="reviewRewriteBtn" onclick="_lockDuring('_reviewRewriteNote','la reescritura de la nota del RBT','review')" style="padding:6px 16px;font-size:12px">Reescribir con correcciones</button>
+          <span id="reviewProg" style="font-size:11px;color:var(--text3)"></span>
+        </div>
+        <div id="reviewNoteOut" style="font-size:11px;margin-top:8px;white-space:pre-wrap;line-height:1.6"></div>
+        <div class="msg" id="reviewMsg"></div>
+      </div>
+
+      <div style="margin-top:14px;padding-top:10px;border-top:2px solid var(--border2)">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Nota reescrita (con errores corregidos)</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px;line-height:1.5">Resultado de "Reescribir con correcciones". Revisa siempre antes de usarla: el sistema corrige contra la info del cliente, pero la decisión clínica es tuya.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn btn-outline" onclick="(function(){var t=document.getElementById('reviewRewriteOut');if(t&&t.value){navigator.clipboard.writeText(t.value);}})()" style="padding:6px 14px;font-size:12px">Copiar</button>
+          <span id="reviewRewriteProg" style="font-size:11px;color:var(--text3)"></span>
+        </div>
+        <textarea id="reviewRewriteOut" rows="14" style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)"></textarea>
+        <div id="reviewRewriteFlags" style="font-size:11px;margin-top:8px;white-space:pre-wrap;line-height:1.6;color:var(--text3)"></div>
+      </div>
     </div>
   </div>
 
@@ -3712,7 +3746,7 @@ function nDaysAgo(n){
    TABS
 ═══════════════════════════════════════════════════════════ */
 function switchTab(t) {
-  ['analyst','clients','gen','analystgen','sup','monthly','abamatrix'].forEach(id => {
+  ['analyst','clients','gen','analystgen','sup','monthly','abamatrix','review'].forEach(id => {
     document.getElementById('tab-'+id).style.display = t===id ? 'block' : 'none';
     document.getElementById('tab-btn-'+id).classList.toggle('active', t===id);
   });
@@ -3723,6 +3757,7 @@ function switchTab(t) {
   if (t === 'analystgen') { refreshAnalystTherapistSelect(); }
   if (t === 'monthly') { refreshMthClientSelect(); updateOPPrompt(); }
   if (t === 'abamatrix') { refreshAllTherapistSelects(); _abaFillSelect('abaMedSel', ABA_MEDICAL.concat(['Other']), '— select —'); _abaRefreshClientSelect(); _abaCheckReady(); }
+  if (t === 'review') { refreshAllTherapistSelects(); _reviewRefreshClientSelect(); }
   if (t === 'clients') {
     refreshAllTherapistSelects();
     // Auto-refresh note history for the active client when returning to Clients tab
@@ -3917,6 +3952,10 @@ function refreshAllTherapistSelects() {
   // AbaMatrix tab therapist selector
   const abaTSel = document.getElementById('abaTherapistSel');
   if (abaTSel) { const cur=abaTSel.value; abaTSel.innerHTML=opts.replace('— select —','— select therapist —'); if(cur&&therapists.find(t=>t.id===cur))abaTSel.value=cur; }
+
+  // Review tab therapist selector
+  const revTSel = document.getElementById('reviewTherapistSel');
+  if (revTSel) { const cur=revTSel.value; revTSel.innerHTML=opts.replace('— select —','— select therapist —'); if(cur&&therapists.find(t=>t.id===cur))revTSel.value=cur; }
 
   // Analyst tab analyst selector (non-RBT therapists only)
   if (typeof refreshAnalystTherapistSelect==='function') refreshAnalystTherapistSelect();
@@ -4593,6 +4632,7 @@ function _refuseClientSwitch(selectId){
    boton, y ese es el cliente que queda bloqueado mientras dura la operacion. */
 function _lockClientId(src){
   if(src === 'aba')    return _abaClientId;
+  if(src === 'review') return _reviewClientId;
   if(src === 'assess') return _assessCurrentClientId;
   if(src === 'active') return activeClientId;
   var el = document.getElementById(src);
@@ -8058,17 +8098,29 @@ function _abaDeterministicAudit(text, clientName){
   return issues;
 }
 
-async function _abaRewriteNote(){
-  if(!_abaClientId){ showMsg('abaMsg','Selecciona un cliente primero.','err'); return; }
-  var raw = ((document.getElementById('abaRewriteIn')||{}).value || '').trim();
-  if(!raw){ showMsg('abaMsg','Pega primero la nota de AbaMatrix a reescribir.','err'); return; }
-  var cfg = _abaCfg(_abaClientId) || {};
-  var prof = _sliceProfileFor((LS.get('aba5_assess_' + _abaClientId) || '').trim(), null, { catalogsOnly: true });
-  if(!prof){ showMsg('abaMsg','Este cliente no tiene assessment reducido guardado.','err'); return; }
+async function _abaRewriteNote(opts){
+  // opts permite reusar la reescritura para la nota de AbaMatrix (por defecto) o
+  // para una nota externa del RBT en la pestaña "Revisar nota", corrigiendo los
+  // errores contra la info de ESE cliente.
+  opts = opts || {};
+  var srcId    = opts.srcId    || 'abaRewriteIn';
+  var outId    = opts.outId    || 'abaRewriteOut';
+  var btnId    = opts.btnId    || 'abaRewriteBtn';
+  var progId   = opts.progId   || 'abaRewriteProg';
+  var flagsId  = opts.flagsId  || 'abaRewriteFlags';
+  var msgId    = opts.msgId    || 'abaMsg';
+  var emptyMsg = opts.emptyMsg || 'Pega primero la nota de AbaMatrix a reescribir.';
+  var clientId = opts.clientId || _abaClientId;
+  if(!clientId){ showMsg(msgId,'Selecciona un cliente primero.','err'); return; }
+  var raw = ((document.getElementById(srcId)||{}).value || '').trim();
+  if(!raw){ showMsg(msgId, emptyMsg,'err'); return; }
+  var cfg = _abaCfg(clientId) || {};
+  var prof = _sliceProfileFor((LS.get('aba5_assess_' + clientId) || '').trim(), null, { catalogsOnly: true });
+  if(!prof){ showMsg(msgId,'Este cliente no tiene assessment reducido guardado.','err'); return; }
 
-  var btn = document.getElementById('abaRewriteBtn'); if(btn) btn.disabled = true;
-  var prog = document.getElementById('abaRewriteProg'); if(prog) prog.textContent = 'Reescribiendo…';
-  var flagsEl = document.getElementById('abaRewriteFlags'); if(flagsEl) flagsEl.textContent = '';
+  var btn = document.getElementById(btnId); if(btn) btn.disabled = true;
+  var prog = document.getElementById(progId); if(prog) prog.textContent = 'Reescribiendo…';
+  var flagsEl = document.getElementById(flagsId); if(flagsEl) flagsEl.textContent = '';
   try{
     // Vocabulario cerrado de ESTE cliente (lo único permitido)
     var uniq = function(a){ var s={},o=[]; (a||[]).forEach(function(x){ x=String(x||'').trim(); if(x && !s[x.toLowerCase()]){ s[x.toLowerCase()]=1; o.push(x);} }); return o; };
@@ -8076,7 +8128,7 @@ async function _abaRewriteNote(){
     var cbf = cfg.consequencesByFunction || {};
     Object.keys(cbf).forEach(function(k){ consUnion = consUnion.concat(cbf[k]||[]); });
     consUnion = uniq(consUnion);
-    var pools = LS.get('aba5_pools_' + _abaClientId) || {};
+    var pools = LS.get('aba5_pools_' + clientId) || {};
     var reinf = String(pools.reinforcers||'').trim() || (cfg.reinforcers||[]).join(', ');
 
     var lists = '';
@@ -8121,13 +8173,13 @@ async function _abaRewriteNote(){
       + 'CLIENT REDUCED ASSESSMENT (source of truth for function, replacement and reinforcer):\n' + prof + '\n\n'
       + 'ABAMATRIX NOTE TO REWRITE (correct it in place; keep what actually happened):\n"""\n' + raw + '\n"""';
 
-    var out = await callAPI(prompt, sys, null, _abaClientId, 8192, 0);
+    var out = await callAPI(prompt, sys, null, clientId, 8192, 0);
     var txt = String(out||'').trim();
     var note = txt, changes = '';
     var mk = txt.indexOf('---CAMBIOS---');
     if(mk >= 0){ note = txt.slice(0, mk).trim(); changes = txt.slice(mk + 13).trim(); }
 
-    var outEl = document.getElementById('abaRewriteOut'); if(outEl) outEl.value = note;
+    var outEl = document.getElementById(outId); if(outEl) outEl.value = note;
     // Validación local: marca términos que pudieran haber quedado fuera de las listas cerradas
     var localFlags = [];
     var lowNote = ' ' + note.toLowerCase() + ' ';
@@ -8143,31 +8195,52 @@ async function _abaRewriteNote(){
       if(localFlags.length) body += (body?'\n':'') + 'Avisos de validación local:\n' + localFlags.map(function(x){ return '⚠ ' + x; }).join('\n');
       flagsEl.textContent = body || 'Sin avisos.';
     }
-    showMsg('abaMsg','Nota reescrita.','ok');
+    showMsg(msgId,'Nota reescrita.','ok');
   }catch(e){
-    showMsg('abaMsg','Error al reescribir: ' + (e && e.message ? e.message : e),'err');
+    showMsg(msgId,'Error al reescribir: ' + (e && e.message ? e.message : e),'err');
   }finally{
     if(btn) btn.disabled = false;
     if(prog) prog.textContent = '';
   }
 }
 
-async function _abaAuditNote(){
-  var ta = document.getElementById('abaNoteOut');
-  var text = ta ? String(ta.value||'').trim() : '';
-  if(!text){ showMsg('abaMsg','Genera primero la nota.','err'); return; }
-  if(!_abaClientId){ showMsg('abaMsg','Selecciona un cliente.','err'); return; }
-  var c = (clients||[]).find(function(x){ return x.id === _abaClientId; });
-  var prof = _sliceProfileFor((LS.get('aba5_assess_' + _abaClientId) || '').trim(), null, { catalogsOnly: true });
+// Reescritura para la pestaña independiente "Revisar nota de RBT": corrige la
+// nota pegada contra la info del cliente seleccionado en esa misma pestaña.
+function _reviewRewriteNote(){
+  return _abaRewriteNote({
+    srcId:'reviewNoteIn', outId:'reviewRewriteOut', btnId:'reviewRewriteBtn',
+    progId:'reviewRewriteProg', flagsId:'reviewRewriteFlags', msgId:'reviewMsg',
+    clientId:_reviewClientId, emptyMsg:'Pega la nota del RBT a corregir.'
+  });
+}
 
-  var btn = document.getElementById('abaAuditBtn'); if(btn) btn.disabled = true;
-  var out = document.getElementById('abaAuditOut');
+async function _abaAuditNote(opts){
+  // opts permite reusar esta auditoría para la nota generada (por defecto) o para
+  // una nota externa del RBT pegada en la sección "Revisar nota de RBT".
+  opts = opts || {};
+  var srcId   = opts.srcId   || 'abaNoteOut';
+  var outId   = opts.outId   || 'abaAuditOut';
+  var msgId   = opts.msgId   || 'abaMsg';
+  var btnId   = opts.btnId   || 'abaAuditBtn';
+  var emptyMsg= opts.emptyMsg|| 'Genera primero la nota.';
+  // clientId indica contra QUÉ cliente se audita. Por defecto el de AbaMatrix;
+  // la pestaña "Revisar nota" pasa su propio cliente seleccionado.
+  var clientId = opts.clientId || _abaClientId;
+  var ta = document.getElementById(srcId);
+  var text = ta ? String(ta.value||'').trim() : '';
+  if(!text){ showMsg(msgId, emptyMsg,'err'); return; }
+  if(!clientId){ showMsg(msgId,'Selecciona un cliente.','err'); return; }
+  var c = (clients||[]).find(function(x){ return x.id === clientId; });
+  var prof = _sliceProfileFor((LS.get('aba5_assess_' + clientId) || '').trim(), null, { catalogsOnly: true });
+
+  var btn = document.getElementById(btnId); if(btn) btn.disabled = true;
+  var out = document.getElementById(outId);
   if(out) out.innerHTML = '<span style="color:var(--text3)">Auditando…</span>';
   try{
     var hard = _abaDeterministicAudit(text, c ? c.name : '');
     // T4 - validador determinista contra el MFC (7 defectos, cada uno con la frase
     // exacta citada). Modo estricto en auditor\u00EDa manual (providedNumbers indefinido).
-    var mfcAudit = (typeof _mfcAuditNote==='function') ? _mfcAuditNote(text, _abaClientId) : {findings:[],gapNotices:[]};
+    var mfcAudit = (typeof _mfcAuditNote==='function') ? _mfcAuditNote(text, clientId) : {findings:[],gapNotices:[]};
 
     var sys = 'You audit the TEXT OF A CPT 97153 ABA SESSION NOTE for Florida Medicaid compliance.\n\n'
       + 'SCOPE - CRITICAL: you audit ONLY the words written in the note below. You are NOT auditing the client\u2019s assessment, the behavior plan, the analyst\u2019s clinical decisions, or the AbaMatrix platform\u2019s option lists. Those are outside our control and are NOT findings. Never comment on what the assessment does or does not specify, never suggest changes to the behavior plan, and never flag an option that the platform offers. Only report defects present in the note text itself.\n\n'
@@ -8189,7 +8262,7 @@ async function _abaAuditNote(){
     var prompt = 'CLIENT NAME (the only personal name allowed): ' + ((c && c.name) || 'the client') + '\n\n'
       + 'NOTE TO AUDIT (this text, and ONLY this text, is what you audit):\n' + text;
 
-    var raw = await callAPI(prompt, sys, null, _abaClientId, 8192, 0);
+    var raw = await callAPI(prompt, sys, null, clientId, 8192, 0);
     var txt = String(raw||'').replace(/```json|```/g,'').trim();
     var data = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
     var findings = Array.isArray(data.findings) ? data.findings : [];
@@ -8225,13 +8298,49 @@ async function _abaAuditNote(){
       });
     }
     if(out) out.innerHTML = html;
-    showMsg('abaMsg', verdict === 'PASS' ? 'Auditoría superada.' : 'Auditoría: revisa los hallazgos.', verdict === 'PASS' ? 'ok' : 'err');
+    showMsg(msgId, verdict === 'PASS' ? 'Auditoría superada.' : 'Auditoría: revisa los hallazgos.', verdict === 'PASS' ? 'ok' : 'err');
   } catch(err){
     if(out) out.innerHTML = '';
-    showMsg('abaMsg','Error al auditar: ' + (err.message||err), 'err');
+    showMsg(msgId,'Error al auditar: ' + (err.message||err), 'err');
   } finally {
     if(btn) btn.disabled = false;
   }
+}
+
+// ── Pestaña independiente "Revisar nota de RBT" ──────────────────────────────
+// Su propio estado de cliente, sin relación con AbaMatrix. El terapeuta y el
+// cliente se eligen en esta misma pestaña y se audita la nota pegada contra la
+// información de ESE cliente (reglas clínicas, terminología, cero fabricación,
+// reforzador↔función/MFC y §59G-4.125). Solo señala; no reescribe.
+var _reviewClientId = null;
+
+function _reviewRefreshClientSelect(){
+  var sel = document.getElementById('reviewClientSel');
+  if(!sel) return;
+  var cur = sel.value;
+  var therapistId = (document.getElementById('reviewTherapistSel') || {}).value || '';
+  var filtered = therapistId
+    ? (clients||[]).filter(function(c){ return c.therapistId === therapistId; })
+                   .sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); })
+    : [];
+  var opts = '<option value="">— select client —</option>';
+  filtered.forEach(function(c){ opts += '<option value="' + c.id + '">' + esc(c.name||c.id) + '</option>'; });
+  sel.innerHTML = opts;
+  if(cur && filtered.find(function(c){ return c.id === cur; })) sel.value = cur;
+  _reviewOnClientChange();
+}
+
+function _reviewOnClientChange(){
+  var sel = document.getElementById('reviewClientSel');
+  _reviewClientId = (sel && sel.value) ? sel.value : null;
+}
+
+function _abaReviewRbtNote(){
+  return _abaAuditNote({
+    srcId:'reviewNoteIn', outId:'reviewNoteOut', msgId:'reviewMsg',
+    btnId:'reviewBtn', clientId:_reviewClientId,
+    emptyMsg:'Pega la nota del RBT a revisar.'
+  });
 }
 
 // One button: generates every AI-driven field, assembles the AbaMatrix form in
@@ -13534,6 +13643,23 @@ function build97153Prompt(clientObj, dur, dt, place, summary, pools, rotCtx, inc
   try{ window._lastEnvChanges = envChanges||''; window._lastMedConcerns = medConcerns||''; }catch(e){}
   const envLine97153=envChanges?`\nENVIRONMENTAL CHANGES: ${envChanges} — mention at start of note.`:`\nENVIRONMENTAL CHANGES: NONE WERE REPORTED FOR THIS SESSION — ABSOLUTE PROHIBITION: do NOT mention any environmental change, setting event, move or relocation, change of school or classroom, new or absent caregiver, change of routine or schedule, visitors, travel, or any household/context event. Do not take one from the client profile, the reduced assessment or the background: those are history, not events of this session. The note simply does not mention this topic.`;
   const medLine97153=medConcerns?`\nMEDICAL CONCERNS: ${medConcerns} — mention at start of note.`:`\nMEDICAL CONCERNS: NONE WERE REPORTED FOR THIS SESSION — ABSOLUTE PROHIBITION: do NOT mention any medication change, illness, sickness, poor sleep, allergy, appointment, injury or any medical event. Do not take one from the client profile, the reduced assessment or the background. The note simply does not mention this topic.`;
+  // Apertura de setting events: si el analista reportó un cambio ambiental o médico
+  // para ESTA sesión, se OBLIGA a documentarlo y se PROHÍBE la apertura "no changes
+  // reported". Si no reportó nada, se rota entre las variantes de "sin cambios".
+  const _settingReported97153 = !!(envChanges || medConcerns);
+  const settingEventsOpening97153 = _settingReported97153
+    ? `A SETTING EVENT / CONTEXT CHANGE WAS PROVIDED FOR THIS SESSION (see ENVIRONMENTAL CHANGES / MEDICAL CONCERNS above). You MUST open the note by documenting the specific change(s), and you are ABSOLUTELY PROHIBITED from writing that no environmental or medical changes were reported (do NOT use any "no environmental or medical changes" / "without reported ... changes" phrasing anywhere in the note). Do NOT reframe the change as a mere attendance/participant fact and then negate it.
+ATTRIBUTION — match the source to the type of change; do NOT default to "the caregiver reported":
+  - Caregiver-reported conditions (poor sleep, missed/changed medication, illness, diet change, an incident at home): "The caregiver reported [the exact condition] prior to the session."
+  - Contextual/staffing/setting changes that the RBT observes directly (a new RBT, a new therapist, a change of setting or room, a schedule change, a new person present): state it as an observed context WITHOUT attributing it to the caregiver — e.g. "This session was conducted with a new RBT," / "Services were delivered in a new setting this session," — the caregiver did not "report" a staffing change.
+INTEGRATION — MANDATORY: the change is not a throwaway opening line. Reflect its clinical relevance again in the body at least once, in OBSERVABLE terms only (e.g. how the client responded to the changed context at session start and/or during early tasks), without inventing numbers and without speculating about internal states. If the change had no observable effect, you may state that no change in the client's observed behavior was associated with it — but you may NOT negate that the change itself occurred.`
+    : `NO SETTING EVENTS WERE REPORTED. Choose ONE of the following variations — rotate across notes, never repeat the same one consecutively:
+  V1: "The session began with no environmental or medical changes reported."
+  V2: "No environmental or medical changes were reported at session start."
+  V3: "The caregiver reported no changes in environmental conditions or medical status prior to the session."
+  V4: "No medical or environmental changes were noted prior to the initiation of services."
+  V5: "Services were initiated without reported environmental or medical changes."
+  V6: "The caregiver indicated no changes in medical status or environmental conditions preceding the session."`;
   const crisisLine97153 = crisisSituation
     ? `\nCRISIS SITUATION THIS SESSION: ${crisisSituation}\nCRISIS RULES: Document the crisis in observable terms. Response blocking may be referenced ONLY as directly caused by this crisis — 10-15 seconds maximum to prevent harm, paired with prompt toward replacement behavior. Notify supervisor per plan. No physical restrictions beyond this.`
     : `\nNO CRISIS THIS SESSION — RESPONSE BLOCKING AND ALL PHYSICAL RESTRICTIONS ARE STRICTLY PROHIBITED. Never mention response blocking in this note. Use only: EXT, DRA, DRI, DRO, FCT, NCR, antecedent manipulation, prompting.`;
@@ -13562,12 +13688,28 @@ function build97153Prompt(clientObj, dur, dt, place, summary, pools, rotCtx, inc
     'Backward Chaining','Forward Chaining','Total Task Presentation',
     'Token Reinforcement','Self-Management','Video Modeling'
   ];
+  // Highest-authority source: the interventions the assessment documents FOR EACH
+  // maladaptive behavior worked this session (pools.mal[].int). This is the same
+  // per-behavior planned procedure the AbaMatrix path uses; it is the real closed
+  // list, unlike a fuzzy substring match against the free-text summary.
+  const _docdInterventions = (function(){
+    const rows = (typeof normalizeBehaviorArr === 'function') ? normalizeBehaviorArr((pools && pools.mal) || []) : [];
+    const out = [];
+    (selMal||[]).forEach(function(name){
+      const row = rows.find(function(b){ return b && String(b.name||'').trim().toLowerCase() === String(name).trim().toLowerCase(); });
+      const doc = row && String(row.int||'').trim();
+      if(doc) out.push('  - ' + name + ': ' + doc);
+    });
+    return out;
+  })();
   const planInterventions = KNOWN_INTERVENTIONS.filter(intv =>
     summary.toLowerCase().includes(intv.toLowerCase().substring(0,8))
   );
-  const interventionConstraint = planInterventions.length
-    ? `\nINTERVENTION CONSTRAINT — ABSOLUTE: You may ONLY use interventions explicitly found in this client's plan. Permitted interventions for this client: ${planInterventions.join(', ')}. Do NOT use any other intervention not listed here.`
-    : `\nINTERVENTION CONSTRAINT: Use only interventions explicitly described in the clinical context above. Do not use generic interventions not mentioned in the plan.`;
+  const interventionConstraint = _docdInterventions.length
+    ? `\nINTERVENTION CONSTRAINT — ABSOLUTE CLOSED LIST BY BEHAVIOR (highest authority — these are this client's planned procedures documented in the assessment for each behavior of this session):\n${_docdInterventions.join('\n')}\nYou may document ONLY the interventions named above for each corresponding behavior, plus the always-implicit antecedent manipulation, prompting, and reinforcement delivery. It is STRICTLY PROHIBITED to introduce ANY intervention not documented above for that behavior — do NOT add Redirection / Redirecting, Modeling / Imitation, Premack Principle, DTT, or any other procedure that is not in this client's plan for that behavior, however clinically plausible it looks. Adding an intervention not in the plan is a compliance failure and is forbidden.`
+    : planInterventions.length
+    ? `\nINTERVENTION CONSTRAINT — ABSOLUTE: You may ONLY use interventions explicitly found in this client's plan. Permitted interventions for this client: ${planInterventions.join(', ')}. Do NOT use any other intervention not listed here — do NOT add Redirection, Modeling, Premack, or any procedure absent from the plan.`
+    : `\nINTERVENTION CONSTRAINT: Use only interventions explicitly described in the clinical context above. Do not use generic interventions not mentioned in the plan. Do NOT invent or add interventions that are not present in the clinical context.`;
 
   // Long session protection (3+ hours): Medicaid requires evidence treatment was
   // active throughout the full session. Inject protection language into prompt.
@@ -13607,15 +13749,7 @@ For each intervention documented, the note must naturally reflect: (1) the speci
 
 OPENING — SETTING EVENTS:
 NEVER write "Prior to the session, the RBT checked with the caregiver for any setting events." That phrase is not clinical content.
-TWO CASES:
-(A) No setting events reported: choose ONE of the following variations — rotate across notes, never repeat the same one consecutively:
-  V1: "The session began with no environmental or medical changes reported."
-  V2: "No environmental or medical changes were reported at session start."
-  V3: "The caregiver reported no changes in environmental conditions or medical status prior to the session."
-  V4: "No medical or environmental changes were noted prior to the initiation of services."
-  V5: "Services were initiated without reported environmental or medical changes."
-  V6: "The caregiver indicated no changes in medical status or environmental conditions preceding the session."
-(B) Setting events were reported (poor sleep, missed medication, behavioral incident, dietary change): write one sentence documenting the specific event(s): "The caregiver reported [specific event] prior to the session." If session-start behavior is clinically relevant, add one observable sentence using a varied opener: "At session start," / "Upon initiation of services," / "When services began," / "At the start of the session," — followed by [client name] and the observable behavior.
+${settingEventsOpening97153}
 Do NOT use comparative baseline language: "higher than typical," "elevated rate," "more than usual," "atypical for this client" — document only what was directly observed.
 
 MEDICAID AUDIT-PROTECTION RULES — mandatory for every sentence:
