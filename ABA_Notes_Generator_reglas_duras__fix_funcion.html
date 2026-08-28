@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23g · criterios clinicos destilados: eleccion de esquema, variante de DR, prompting, reforzadores</div>
+  build 2026-08-23h · los componentes de supervision son etiquetas, no frases; el rol real en vez de supervisee</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -13085,7 +13085,7 @@ CLIENT RESPONSE LEVELS (use one per note, pick the one that accurately reflects 
 Good | Fair | Poor | Moderate
 
 SESSION OPENING — RBT SUPERVISION ONLY (use ONLY when ntId is 97155-rbt; NEVER for BCaBA or direct sessions): Write an ORIGINAL opening sentence in your own words. Do NOT copy any of the examples below verbatim, and do NOT default to the same opener every time (especially do NOT keep starting notes with "Made direct observations..."). Vary the structure and wording from note to note. The sentences below are EXAMPLES of the acceptable clinical tone and content only — study the register, then write something fresh that conveys equivalent clinical meaning:
-- "Conducted active direction while the RBT was delivering the service to ensure that the procedures were being implemented correctly, to correct errors in implementation if needed, and to train the supervisee in needed aspects of protocol implementation."
+- "Conducted active direction while the RBT was delivering the service to ensure that the procedures were being implemented correctly, to correct errors in implementation if needed, and to train the RBT in needed aspects of protocol implementation."
 - "The BCBA conducted direct observation of the RBT's session delivery, providing real-time corrective feedback and evaluating implementation fidelity against the current treatment protocols."
 - "Supervisory oversight was provided through direct observation of the RBT's service delivery, with clinical direction focused on implementation accuracy and protocol adherence."
 - "The BCBA reviewed the progress of the client in using replacement skills and reducing maladaptive behaviors, and directed the RBT in necessary adjustments to intervention delivery."
@@ -13097,8 +13097,8 @@ SESSION OPENING — RBT SUPERVISION ONLY (use ONLY when ntId is 97155-rbt; NEVER
 - "Clinical oversight was provided by the BCBA through structured observation of the RBT's session delivery, with real-time direction focused on technical accuracy and therapeutic consistency."
 - "The BCBA carried out active supervision of the RBT's intervention delivery, assessing procedural fidelity and directing the supervisee in key aspects of protocol implementation."
 
-SESSION OPENING — BCaBA SUPERVISION ONLY (use ONLY when ntId is 97155-bcaba; NEVER for RBT-only or BCBA-direct sessions): CLINICAL FRAMING — the BCaBA is an assistant behavior analyst (a clinical professional), NOT a technician. This note documents professional clinical DIRECTION and BACB-COMPETENCY EVALUATION of the BCaBA — NOT technician oversight. NEVER describe the BCaBA as "delivering the service", as being scored for "implementation fidelity" or "procedural fidelity", or as running trials with the client like a technician. Instead, frame the session as the BCBA observing the BCaBA's clinical work with the individual and/or the caregiver, discussing the case as colleagues, guiding the BCaBA's clinical reasoning and protocol design/modification, and evaluating the BCaBA's competencies across the BACB content areas. The strategies traced in the session are those the BCaBA carries forward — directing the RBT and training caregivers (documented separately as 97155-HN and 97156-HN). If an RBT is named as present, the RBT is the one implementing the protocols with the client while the BCBA and the BCaBA observe and discuss as colleagues and the BCBA instructs both; the BCaBA does NOT implement with the client in that configuration. Write an ORIGINAL opening sentence in your own words; do NOT copy any example verbatim and do NOT reuse the same opener every time. The sentences below are EXAMPLES of the correct clinical tone only — write something fresh that conveys equivalent meaning:
-- "The BCBA observed the BCaBA's clinical work with the individual and reviewed current behavioral data together, guiding the analysis and the development of protocol modifications."
+SESSION OPENING — BCaBA SUPERVISION ONLY (use ONLY when ntId is 97155-bcaba; NEVER for RBT-only or BCBA-direct sessions): CLINICAL FRAMING — the BCaBA is an assistant behavior analyst (a clinical professional), NOT a technician. This note documents professional clinical DIRECTION and BACB-COMPETENCY EVALUATION of the BCaBA — NOT technician oversight. NEVER describe the BCaBA as "delivering the service", as being scored for "implementation fidelity" or "procedural fidelity", or as running trials with the client like a technician. Instead, frame the session as the BCBA observing the BCaBA's clinical work with the client and/or the caregiver, discussing the case as colleagues, guiding the BCaBA's clinical reasoning and protocol design/modification, and evaluating the BCaBA's competencies across the BACB content areas. The strategies traced in the session are those the BCaBA carries forward — directing the RBT and training caregivers (documented separately as 97155-HN and 97156-HN). If an RBT is named as present, the RBT is the one implementing the protocols with the client while the BCBA and the BCaBA observe and discuss as colleagues and the BCBA instructs both; the BCaBA does NOT implement with the client in that configuration. Write an ORIGINAL opening sentence in your own words; do NOT copy any example verbatim and do NOT reuse the same opener every time. The sentences below are EXAMPLES of the correct clinical tone only — write something fresh that conveys equivalent meaning:
+- "The BCBA observed the BCaBA's clinical work with the client and reviewed current behavioral data together, guiding the analysis and the development of protocol modifications."
 - "Working alongside the BCaBA, the BCBA directed the clinical decision-making for the case and traced the intervention strategies to be carried forward to direct treatment and to caregiver training."
 - "The BCBA provided clinical direction to the BCaBA, discussing the recipient's progress and instructing on protocol design while addressing the relevant BACB content areas."
 - "The BCBA and the BCaBA reviewed the treatment plan and the recipient's data as colleagues, with the BCBA modeling clinical reasoning and providing feedback on the BCaBA's professional competencies."
@@ -13712,7 +13712,7 @@ STRICT RULES: No clinical narrative (that belongs in the 97155 note). No behavio
 
   const supLabel=ntId==='97155-bcaba'?'BCaBA':'RBT';
   const supOpenings = ntId==='97155-bcaba'
-    ? ['The BCBA observed the clinical work of the BCaBA with the individual and the caregiver, directed the case analysis and protocol decisions, and evaluated the BCaBA across the relevant BACB content areas,']
+    ? ['The BCBA observed the clinical work of the BCaBA with the client and the caregiver, directed the case analysis and protocol decisions, and evaluated the BCaBA across the relevant BACB content areas,']
     : ['Conducted active direction while the RBT was delivering the service to ensure that the procedures were being implemented correctly, to correct errors in implementation if needed, and to train the supervisee in needed aspects of protocol implementation,'];
   const openingPool = supOpenings.join(' / ');
   const malList = sessionMal.length ? annotateBehaviorsWithFn(sessionMal, _fnMap).join(' | ') : 'see clinical context';
@@ -16680,6 +16680,44 @@ function _polishNoteText(text){
   var mark = function(label, before){ if(before !== t) fixed.push(label); };
   var b;
 
+  /* 0. VOCABULARIO DEL FORMULARIO DE SUPERVISION. Los componentes del BACB se
+        llaman "Observation of supervisee working with the individual",
+        "Specific recipient discussed"… y el modelo arrastraba esas palabras a la
+        prosa. "Supervisee" y "the individual" son lenguaje de formulario: el
+        reglamento exige nombrar el rol real y "the client".
+        El rol se deduce del propio texto — si la nota habla del BCaBA, el
+        dirigido es el BCaBA; si habla del RBT, es el RBT — asi que no hace
+        falta pasarle contexto y funciona en las cuatro rutas que llaman aqui. */
+  b = t;
+  /* Sin distinguir mayusculas: la mencion suele abrir frase ("The BCaBA led…")
+     y con la version sensible a mayusculas no se detectaba el rol, asi que TODO
+     caia en el respaldo generico y una nota de BCaBA acababa diciendo "the
+     technician" — degradando al analista asistente a tecnico.
+     Si aparecen los dos, el dirigido es el BCaBA: en esa configuracion el BCBA
+     supervisa al BCaBA y el RBT es quien implementa con el cliente. */
+  var _role = /\bthe\s+BCaBA\b/i.test(t) ? 'the BCaBA'
+            : /\bthe\s+RBT\b/i.test(t)   ? 'the RBT'
+            : /\bthe\s+technician\b/i.test(t) ? 'the technician' : '';
+  if(_role){
+    t = t.replace(/\bthe supervisee\b/g, _role)
+         .replace(/\bThe supervisee\b/g, _role.charAt(0).toUpperCase() + _role.slice(1));
+  }
+  // Sin rol identificable no se inventa uno: se neutraliza a "the technician",
+  // que es la unica lectura segura, y queda anotado en el informe de arreglos.
+  else {
+    t = t.replace(/\bthe supervisee\b/g, 'the technician')
+         .replace(/\bThe supervisee\b/g, 'The technician');
+  }
+  mark('"supervisee" sustituido por el rol real', b);
+
+  b = t;
+  t = t.replace(/\bthe specific recipient\b/gi, 'the client')
+       .replace(/\bthe recipient\b/gi, 'the client')
+       .replace(/\bthe individual\b/gi, 'the client');
+  // "The" al principio de frase conserva su mayuscula.
+  t = t.replace(/(^|[.!?]\s+)the client\b/g, function(m, p1){ return p1 + 'The client'; });
+  mark('lenguaje de formulario ("the individual", "the recipient") sustituido por "the client"', b);
+
   // 1. Internal variant selectors leaking into the note. The prompt assigns a
   //    structural variant per note ("use V5"), and the model sometimes writes the
   //    LABEL instead of just applying it: "V5: The RBT addressed target behaviors".
@@ -18207,6 +18245,28 @@ const PROTO_MOD_DETAIL = {
 };
 
 // ── BCABA SUPERVISION FACTORS (only shown when supType === 'bcaba') ──────────
+
+/* Los componentes de supervision del BACB son ETIQUETAS ADMINISTRATIVAS de una
+   lista cerrada — "Observation of supervisee working with the individual",
+   "Specific recipient discussed", "Required documentation reviewed" — y el
+   modelo las estaba encadenando VERBATIM en una frase:
+
+     "the BCBA engaged in direct observation of the supervisee working with the
+      individual, discussed the specific recipient's treatment plan, and
+      reviewed required clinical documentation."
+
+   Eso es pasar lista, no documentar: dice QUE CASILLAS se marcaron, no que paso
+   en la sesion. Y arrastra a la prosa el vocabulario del formulario —
+   "supervisee", "the individual", "recipient" — que el reglamento no admite.
+   Misma regla de dos capas que con el assessment: la etiqueta identifica el
+   componente, la prosa cuenta lo que ocurrio. */
+const SUP_COMPONENT_PROSE_RULE = `SUPERVISION COMPONENTS ARE LABELS, NOT SENTENCES (MANDATORY):
+1. The supervision components listed for this session come from a closed administrative form. They tell you WHICH supervisory activities took place. They are NOT prose and must never be reproduced, quoted, paraphrased or strung together into a sentence.
+2. FORBIDDEN — never write anything of this shape: "engaged in direct observation of the supervisee working with the individual", "the specific recipient was discussed", "required documentation was reviewed", "BACB task list skills were covered", or any sentence that enumerates the components one after another. A sentence that lists which boxes were ticked documents nothing and reads as an unfilled form.
+3. WHAT TO WRITE INSTEAD: for each component that actually occurred, one clinical sentence naming WHO did WHAT, with WHOM, about WHAT CONTENT. "Observation of supervisee working with the individual" becomes what was actually observed — which program, which procedure, what the BCaBA did and what the client did. "Specific recipient discussed" becomes the specific clinical question that was discussed and what was decided. "Required documentation reviewed" becomes which documentation and what was found in it.
+4. NAMES, NOT ROLES FROM THE FORM: the person being directed is "the BCaBA" or "the RBT" — NEVER "the supervisee". The person receiving services is "the client" — NEVER "the individual", "the recipient" or "the specific recipient". These are the words of the administrative form, not of a clinical note.
+5. A component that occurred but produced nothing worth stating is not written at all. It is better to document three components with real content than seven with none.`;
+
 const BCABA_SUP_COMPONENTS = [
   'Observation of supervisee working with the individual',
   'Observation of supervisee working with caregiver/other provider',
@@ -18304,7 +18364,11 @@ function _buildBcabaSupPromptBlock(prefix){
   const task = _getCheckedValues(taskClass);
   const ev   = _getCheckedValues(evalClass);
   if(!comp.length && !task.length && !ev.length) return '';
-  let block = '\n\nBCABA SUPERVISION COMPONENTS — REQUIRED FOR THIS BCaBA SUPERVISION NOTE: weave these items naturally into the supervisory narrative as part of the description of the supervision activity. Do NOT present them as a bulleted list; integrate them into flowing professional clinical paragraphs. Use observable language only.\n';
+  /* "Weave these items into the narrative" es justo lo que producia el pase de
+     lista: el modelo tomaba las etiquetas y las encadenaba. Ahora se dice que
+     son etiquetas y que hay que contar lo que ocurrio bajo cada una. */
+  let block = '\n\nBCABA SUPERVISION COMPONENTS — REQUIRED FOR THIS BCaBA SUPERVISION NOTE. The items below are ADMINISTRATIVE LABELS from the supervision form: they tell you which supervisory activities took place. Document what actually happened under each one, in flowing professional clinical paragraphs. Never reproduce a label as a phrase, never list them one after another, and never present them as bullets. Observable language only.\n'
+    + SUP_COMPONENT_PROSE_RULE + '\n';
   if(comp.length) block += `Supervision components covered: ${comp.join('; ')}.\n`;
   if(task.length) block += `BACB Task List skills covered during this meeting: ${task.join('; ')}.\n`;
   if(ev.length)   block += `Evaluation of supervisee performance addressed: ${ev.join('; ')}.\n`;
@@ -18320,7 +18384,7 @@ const AN_OPENING_RBT = [
   'Supervisory services included direct observation of the RBT\'s implementation, procedural fidelity review, and corrective direction to address observed deviations from the treatment plan.',
   'The BCBA observed the delivery of ABA services, evaluated the RBT\'s implementation against current protocol specifications, and provided immediate corrective guidance where indicated.',
   'Clinical oversight was provided by the BCBA through structured observation of the RBT\'s session delivery, with real-time direction focused on technical accuracy and therapeutic consistency.',
-  'The BCBA carried out active supervision of the RBT\'s intervention delivery, assessing procedural fidelity and directing the supervisee in key aspects of protocol implementation.',
+  'The BCBA carried out active supervision of the RBT\'s intervention delivery, assessing procedural fidelity and directing the RBT in key aspects of protocol implementation.',
   'Supervisory contact was established through direct observation of the RBT\'s service delivery, with corrective feedback and protocol guidance provided throughout the session.',
   'The BCBA reviewed client progress in replacement skill acquisition and maladaptive behavior reduction while directing the RBT in procedural adjustments indicated by the session data.',
   'Active direction was provided to the RBT during service delivery, with observation focused on implementation accuracy, consistency of prompting, and reinforcement delivery.',
