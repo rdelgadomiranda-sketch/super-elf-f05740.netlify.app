@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23i · el Clear de ANALYST limpia de verdad en vez de volver a rellenar</div>
+  build 2026-08-23j · casilla del mes en el batch de ANALYST</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -1063,6 +1063,12 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
       <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2)">Batch mensual &#8212; generar varias notas 97155 y exportar DOCX</summary>
       <div style="font-size:11px;color:var(--text3);margin:8px 0 8px">Una fila por nota: <span style="font-family:var(--mono)">tipo | lugar</span> &#8212; selecciona los valores (sin escribir, para evitar errores). La duraci&oacute;n se toma del selector de Session Details. Los componentes de modificaci&oacute;n del protocolo se rotan autom&aacute;ticamente entre las notas.</div>
       <div id="anBatchRows" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <label for="anBatchMonth" style="font-size:11px;font-weight:600;color:var(--text2)">Mes del lote</label>
+        <input type="month" id="anBatchMonth" onchange="_anSaveBatchMonth()"
+          style="padding:5px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);font-family:var(--sans)">
+        <span style="font-size:10px;color:var(--text3)">Titula el DOCX y nombra el archivo. No entra en el texto de las notas: la fecha de cada sesi&oacute;n se pone a mano.</span>
+      </div>
       <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
         <button class="btn btn-outline" onclick="anBatchAddRow()" style="padding:6px 12px;font-size:12px">+ Agregar nota</button>
         <button class="btn btn-primary" id="anBatchRunBtn" onclick="anBatchRun()" style="padding:7px 16px;font-size:12px">Generar batch</button>
@@ -18631,6 +18637,44 @@ function _anApplyRowThirdParty(place, third){
 function anBatchEnsureRows(){
   var wrap = document.getElementById('anBatchRows');
   if(wrap && !wrap.querySelector('.anBatchRow')) anBatchAddRow();
+  _anInitBatchMonth();
+}
+
+/* MES DEL LOTE. El DOCX se titulaba y se nombraba SIEMPRE con el mes en curso:
+   generar en noviembre las notas de octubre producia un documento titulado
+   noviembre. Ahora el mes se elige, se recuerda entre sesiones, y por defecto es
+   el mes actual — que es lo correcto la mayoria de las veces. */
+function _anBatchMonthKey(){ return 'aba5_anbatchmonth'; }
+
+function _anInitBatchMonth(){
+  var el = document.getElementById('anBatchMonth');
+  if(!el || el.value) return;
+  var saved = '';
+  try{ saved = LS.get(_anBatchMonthKey()) || ''; }catch(e){}
+  if(/^\d{4}-\d{2}$/.test(saved)){ el.value = saved; return; }
+  var d = new Date();
+  el.value = d.getFullYear() + '-' + ('0' + (d.getMonth()+1)).slice(-2);
+}
+
+function _anSaveBatchMonth(){
+  var el = document.getElementById('anBatchMonth');
+  if(!el) return;
+  try{ LS.set(_anBatchMonthKey(), el.value || ''); }catch(e){}
+}
+
+/* Devuelve { label: "October 2026", file: "October_2026" }. Si la casilla esta
+   vacia o trae algo que no es un mes, cae al mes actual en vez de romper la
+   exportacion. */
+function _anBatchMonthLabel(){
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var raw = (document.getElementById('anBatchMonth')||{}).value || '';
+  var m = /^(\d{4})-(\d{2})$/.exec(raw);
+  var yr, mo;
+  if(m){ yr = m[1]; mo = parseInt(m[2],10); }
+  else { var d = new Date(); yr = d.getFullYear(); mo = d.getMonth()+1; }
+  if(!(mo>=1 && mo<=12)){ var d2 = new Date(); yr = d2.getFullYear(); mo = d2.getMonth()+1; }
+  var name = months[mo-1];
+  return { label: name + ' ' + yr, file: name + '_' + yr };
 }
 // Read the batch definition from the selectable rows (type | place | duration; no date).
 function _anBatchParse(){
@@ -18730,14 +18774,12 @@ async function anBatchExportDocx(){
   var clientId = document.getElementById('anClientSel').value;
   var c = clients.find(function(x){ return x.id === clientId; });
   var cname = (c && c.name) || 'Client';
-  // No per-note date anymore — the title/filename month defaults to the current month.
-  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  var _now = new Date();
-  var monthLabel = months[_now.getMonth()] + '_' + _now.getFullYear();
+  // El mes lo elige el usuario en el panel del batch; por defecto, el mes actual.
+  var _mth = _anBatchMonthLabel();
   var paras = [];
   function P(text){ paras.push('<w:p><w:r><w:t xml:space="preserve">'+_xmlEsc(text)+'</w:t></w:r></w:p>'); }
   function PB(){ paras.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>'); }
-  P(cname + ' \u2014 CPT 97155 Session Notes \u2014 ' + monthLabel.replace('_',' '));
+  P(cname + ' \u2014 CPT 97155 Session Notes \u2014 ' + _mth.label);
   P('');
   for(var i=0;i<_anBatch.results.length;i++){
     var r = _anBatch.results[i];
@@ -18761,7 +18803,7 @@ async function anBatchExportDocx(){
   var blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = cname.replace(/[^A-Za-z0-9_-]+/g,'_') + '_97155_' + monthLabel + '.docx';
+  a.download = cname.replace(/[^A-Za-z0-9_-]+/g,'_') + '_97155_' + _mth.file + '.docx';
   a.click();
   URL.revokeObjectURL(a.href);
 }
