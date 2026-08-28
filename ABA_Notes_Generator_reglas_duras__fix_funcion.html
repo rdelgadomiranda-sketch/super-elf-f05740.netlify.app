@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23h · los componentes de supervision son etiquetas, no frases; el rol real en vez de supervisee</div>
+  build 2026-08-23i · el Clear de ANALYST limpia de verdad en vez de volver a rellenar</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -18052,37 +18052,61 @@ function _recordProtoModsUsed(clientId, components){
   LS.set(key, updated);
 }
 
+/* CLEAR de la pestana ANALYST.
+
+   No estaba roto: hacia otra cosa. Limpiaba los campos de texto y las secciones
+   CASP, pero acto seguido RELLENABA otra vez — elegia una meta nueva, rotaba
+   conductas, marcaba solo los componentes de modificacion de protocolo y los
+   factores de supervision del BCaBA. Y ni tocaba lugar, duracion ni
+   participantes. Desde fuera se pulsa Clear, el formulario sigue lleno y parece
+   que el boton no responde.
+
+   Un boton llamado Clear limpia. La rotacion de conductas y la seleccion
+   automatica pertenecen a la generacion, no al borrado: al dejar _anRotCtx en
+   null la proxima nota elige fresco igual, sin necesidad de precargarlo aqui.
+   Se conserva a proposito lo que es CONTEXTO y no sesion: terapista y cliente. */
 function clearAnalyst(){
-  ['anEnvChanges','anMedConcerns','anCrisis','anEmergingMal','anEmergingRep','anEmergingInt','anEmergingClinicalNotes','anPrevPlan'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+  // Campos de texto de la sesion
+  ['anEnvChanges','anMedConcerns','anCrisis','anEmergingMal','anEmergingRep','anEmergingInt',
+   'anEmergingClinicalNotes','anPrevPlan','anCustomGoals97155','anPOtherText']
+    .forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+
+  // Lugar y duracion vuelven a su primera opcion
+  ['anPlace','anDur97155'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el && el.options && el.options.length) el.selectedIndex=0;
+  });
+  if(typeof _anOnPlaceChange==='function'){ try{ _anOnPlaceChange(); }catch(e){} }
+
+  // Participantes: vuelven al estado inicial de la pestana
+  [['anPClient',true],['anPSupervisor',true],['anPTechnician',true],['anPCaregiver',true],['anPOther',false]]
+    .forEach(([id,def])=>{
+      const el=document.getElementById(id);
+      if(!el) return;
+      el.checked=def;
+      if(el.dataset) el.dataset.manuallySet='';
+    });
+  const _oPre=document.getElementById('anPOtherPreset'); if(_oPre) _oPre.selectedIndex=0;
+  const _oIn=document.getElementById('anPOtherInput'); if(_oIn) _oIn.style.display='none';
+
+  // Secciones CASP
   ['anCasp_A','anCasp_B','anCasp_C','anCasp_D'].forEach(id=>{const el=document.getElementById(id); if(el) el.checked=false;});
   document.querySelectorAll('.anCasp_B_item:checked,.anCasp_C_item:checked,.anCasp_D_item:checked').forEach(c=>c.checked=false);
   const aOk=document.querySelector('input[name="anCasp_A_result"][value="ok"]'); if(aOk) aOk.checked=true;
-  onAnalystCaspChange();
-  const clientId=document.getElementById('anClientSel')?.value||'';
-  // Pick one new goal using rotation and put it in the custom goals field
-  const supType=getAnalystSupType();
-  const oneGoal=_pickOneAnalystGoal(clientId, supType);
-  const goalEl=document.getElementById('anCustomGoals97155');
-  if(goalEl) goalEl.value=oneGoal;
-  // Rotate behaviors — force fresh selection away from currently shown ones
-  const pools=clientId?(LS.get('aba5_pools_'+clientId)||{}):{};
-  const currentMal=(_anRotCtx&&_anRotCtx.mal)||[];
-  _anRotCtx=_freshAnalystBehaviors(clientId, pools, currentMal);
-  // Auto-select random protocol modification components for the new session
-  autoSelectProtoMods(clientId);
-  // If BCaBA mode is active, also rotate the supervision factor selections
-  if(getAnalystSupType()==='bcaba'){
-    const compHost=document.getElementById('anBcabaSupComp');
-    if(compHost && !compHost.innerHTML.trim()){
-      _populateBcabaSupCheckboxes('anBcabaSupComp', BCABA_SUP_COMPONENTS, 'anBcabaSupComp_item');
-      _populateBcabaSupCheckboxes('anBcabaSupTask', BCABA_TASK_LIST, 'anBcabaSupTask_item');
-      _populateBcabaSupCheckboxes('anBcabaSupEval', BCABA_EVALUATION, 'anBcabaSupEval_item');
-    }
-    _autoSelectBcabaSup(clientId, 'an');
-  }
-  _anUpdateGenBtn();
+  if(typeof onAnalystCaspChange==='function'){ try{ onAnalystCaspChange(); }catch(e){} }
+
+  // Modificacion de protocolo y factores de supervision del BCaBA: se DESMARCAN.
+  // Antes se marcaban solos, que es lo contrario de limpiar.
+  document.querySelectorAll('.anProtoMod_item:checked,.anBcabaSupComp_item:checked,.anBcabaSupTask_item:checked,.anBcabaSupEval_item:checked')
+    .forEach(c=>{c.checked=false;});
+
+  // La rotacion se reinicia: la proxima generacion elige fresco.
+  _anRotCtx=null;
+
+  if(typeof _anUpdateGenBtn==='function'){ try{ _anUpdateGenBtn(); }catch(e){} }
   const out=document.getElementById('anOutputsContainer'); if(out) out.innerHTML='';
-  const msg=document.getElementById('anMsg'); if(msg){ msg.textContent=''; msg.className='msg'; }
+  // Confirmacion visible: sin ella, un boton que limpia campos ya vacios parece muerto.
+  if(typeof showMsg==='function') showMsg('anMsg','Formulario de sesión limpiado. Se conservan el terapista y el cliente seleccionados.','ok');
 }
 
 
