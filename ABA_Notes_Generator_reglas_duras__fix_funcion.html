@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23j · casilla del mes en el batch de ANALYST</div>
+  build 2026-08-23k · sin el rotulo Plan for Next Session en las notas</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -13154,7 +13154,7 @@ LATEST CLINICAL AUDIT UPDATES (97153 & 97155)
 ════════════════════════════════════════
 - CLIENT RESPONSE RULE: 
   * For 97153/97155: Describe the client's response/reaction to the interventions (approx. 30 words) in a separate paragraph.
-- FUTURE PLANNING: End with a "Plan for Next Session" paragraph detailing follow-up steps for the caregiver or technician and topics for the next meeting.
+- FUTURE PLANNING: End with a closing paragraph on what comes next — follow-up steps for the caregiver or the technician and the topics for the next meeting. Do NOT label this paragraph: no heading, no "Plan for Next Session:", no title of any kind. It is a plain closing paragraph of flowing prose like the rest of the note.
 
 ════════════════════════════════════════
 RBT (97153) STRICT SCOPE & DATA RULES
@@ -13228,7 +13228,7 @@ PROHIBITED TERMS — NEVER USE
 Sensory alternatives, Sensory activities, Sensory Manipulation, Sensory strategies, Self-regulation, Self-soothing, Relax, Relaxation, Calming, Calm, Counting, Yoga, Meditation, Conflict Resolution, Social Stories, Social Narratives, Response Cost, Anger Management, Anger Control, Self-de-escalation, Coping strategies, Diaphragmatic breathing, Systematic desensitization, Frustration, Stress, Anxiety, Upset, Overwhelm, Confusion, Feelings, Emotions, Distress, Dysregulation, Academic, Deep breathing, Breathing techniques, Exercise, functioning effectively, effectively maintained, instructional control, facilitating a more rapid acquisition, strengthened the response, improved significantly (without data), typical responding.
 - COMPARISONS: Never use phrases like "typical responding" or "previous sessions" without a specific date or prior data point.
 - PROTOCOL MODIFICATION: When adjusting prompts, explicitly state the clinical rationale (e.g., "Modified protocol by [action] to address prompt dependency").
-- FUTURE PLANNING: Every note must conclude with a "Plan for Next Session" paragraph specifying the next target for prompt fading or data review.
+- FUTURE PLANNING: Every note must close with a paragraph on what comes next, specifying the next target for prompt fading or data review. Do NOT label this paragraph: no heading, no "Plan for Next Session:", no title of any kind. It is a plain closing paragraph of flowing prose like the rest of the note.
 
 ════════════════════════════════════════
 RESTRICTIVE PROCEDURES (CRITICAL WARNING)
@@ -13291,7 +13291,7 @@ LATEST CLINICAL AUDIT UPDATES (97155 & DIRECT)
 ════════════════════════════════════════
 - CLIENT RESPONSE RULE: Describe the client's response/reaction to the interventions (approx. 30 words) in a separate paragraph.
 - PROTOCOL MODIFICATION: When describing direction to the RBT, explicitly state the clinical "why" behind any prompt adjustment (e.g., "to address prompt dependency").
-- FUTURE PLANNING: Every note must conclude with a "Plan for Next Session" paragraph, specifying how prompt dependency will be monitored and the specific fading strategies to be utilized.
+- FUTURE PLANNING: Every note must close with a paragraph on what comes next, specifying how prompt dependency will be monitored and the specific fading strategies to be utilized. Do NOT label this paragraph: no heading, no "Plan for Next Session:", no title of any kind. It is a plain closing paragraph of flowing prose like the rest of the note.
 - COMPARISONS: ABSOLUTE: never compare this session with any previous session. Do not write "compared to previous sessions", "compared to the prior session", "lower/higher than last session", a previous date, or any before/after claim — not even citing a data point. Describe ONLY what was observed in this session.
 
 ════════════════════════════════════════
@@ -16794,6 +16794,29 @@ function _polishNoteText(text){
   // Recapitalise whatever now opens a sentence.
   t = t.replace(/(^|[.!?]\s+|\n)([a-z])/g, function(m, pre, c){ return pre + c.toUpperCase(); });
   mark('nombre en mayúsculas a Sentence case', b);
+
+  /* 6b. ENCABEZADOS DE SECCION AL INICIO DE PARRAFO. El reglamento pide prosa
+         corrida sin encabezados, pero tres system prompts pedian "concluir con
+         un parrafo Plan for Next Session" — con el nombre entrecomillado, que el
+         modelo leia como un titulo que hay que escribir. Se reformularon esos
+         prompts; esto quita la etiqueta si aun asi aparece.
+         Lista cerrada a proposito: solo los rotulos que el propio sistema pudo
+         inducir. Nada que se parezca a una frase clinica se toca. */
+  b = t;
+  var _HEADINGS = ['plan for next session','plan for the next session','plan for next sessions',
+                   'next session plan','future planning','future plan','plan for follow-up',
+                   'session plan','plan'];
+  _HEADINGS.forEach(function(h){
+    // Los dos puntos pueden ir dentro o fuera de la negrita — "**Plan:**" y
+    // "**Plan**:" son ambos rotulos — asi que se admiten marcadores en las tres
+    // posiciones y se exigen los dos puntos, que son lo que hace de esto un rotulo.
+    var _bold = '(?:\\*\\*|__)?[ \\t]*';
+    var re = new RegExp('(^|\\n)[ \\t]*' + _bold + h.replace(/[-\/\\^$*+?.()|[\]{}]/g,'\\$&') + '[ \\t]*' + _bold + ':[ \\t]*' + _bold, 'gi');
+    t = t.replace(re, '$1');
+  });
+  // La frase que quedaba detras del rotulo empieza ahora el parrafo: mayuscula.
+  t = t.replace(/(^|\n)([a-z])/g, function(m, p1, p2){ return p1 + p2.toUpperCase(); });
+  mark('encabezado de sección eliminado ("Plan for Next Session:")', b);
 
   // 7. Leftovers from the substitutions above.
   b = t;
