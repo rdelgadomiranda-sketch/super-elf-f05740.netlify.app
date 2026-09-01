@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23n · la actividad tambien tiene que caber en el cliente</div>
+  build 2026-08-23o · doble chequeo del nivel del cliente, y modo prudente si no esta claro</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -3714,6 +3714,21 @@ function renderCoveragePanel(clientId){
          </div>`
       : '');
 
+  /* El doble chequeo solo sirve si su desacuerdo se VE. Cuando el reducido y las
+     actividades documentadas apuntan a modalidades distintas, uno de los dos
+     esta mal y hay que arreglarlo en la ficha, no en cada nota. Mientras tanto
+     el generador ya trabaja en modo prudente; esto es para que lo sepas. */
+  const _lvl = (typeof _clientLevelCheck === 'function') ? _clientLevelCheck(pools) : null;
+  const _lvlNote = (_lvl && _lvl.verdict === 'conflict')
+    ? `<div style="margin:6px 0 10px;padding:8px 11px;border:1px solid #b45309;border-left:4px solid #b45309;border-radius:5px;background:#fffbeb;font-size:11px;color:#7c2d12;line-height:1.55">
+         <b>Las dos fuentes no coinciden sobre la modalidad de comunicación.</b>
+         El reducido apunta a <b>${_lvl.fromAssessment === 'alternative' ? 'modalidad alternativa (PECS / AAC / señas)' : 'habla vocal'}</b>,
+         y los programas y actividades documentados apuntan a <b>${_lvl.fromLabels === 'alternative' ? 'modalidad alternativa (PECS / AAC / señas)' : 'habla vocal'}</b>.
+         Uno de los dos está desactualizado. Hasta que lo corrijas en la ficha, el generador no toma partido: elige actividades
+         que funcionan con cualquiera de las dos modalidades, y lee las actividades documentadas solo para el nivel de exigencia.
+       </div>`
+    : '';
+
   panel.style.display='block';
   panel.innerHTML=`<div class="cov-card">
     <div class="cov-title">
@@ -3721,6 +3736,7 @@ function renderCoveragePanel(clientId){
       <span class="cov-reset" onclick="resetHistory('${clientId}')">Reset history</span>
     </div>
     ${_autoNote}
+    ${_lvlNote}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div>
         <div class="cov-sec-lbl">Maladaptive — Active (${malPool.length})</div>
@@ -7119,6 +7135,9 @@ async function _abaBuildOneGoal(chosen, usedThisNote, recentScheds){
     var _actAnn = _annotateActsForClient(acts, _poolsG);
     if(_actAnn.flagged.length){
       console.info('[cliente] actividades marcadas por exigir habla vocal: ' + _actAnn.flagged.join(', '));
+    }
+    if(_actAnn.check && _actAnn.check.cautious){
+      console.info('[cliente] nivel no establecido (' + _actAnn.check.verdict + '): se elige anclado a las actividades documentadas, sin subir ni bajar.');
     }
     acts = _actAnn.list;
     var teach = cfg.teaching || [];
@@ -11596,6 +11615,111 @@ var CAP_NEG_RE = /\b(?:no|none|without|not)\s+(?:\w+\s+){0,2}(?:barrier|limitati
    que se puede senalar una actividad del catalogo pieza por pieza. */
 var CAP_NONVOCAL_RE = /(non[-\s]?vocal|non[-\s]?verbal|pre[-\s]?verbal|minimally\s+(?:vocal|verbal)|limited\s+vocal|no\s+vocal\s+(?:speech|language|repertoire)|\bAAC\b|augmentative|\bPECS\b|picture\s+exchange|speech[-\s]generating|sign\s+language|gestural\s+communication)/i;
 
+/* ── DOBLE CHEQUEO DEL NIVEL DEL CLIENTE ───────────────────────────────────
+   El estado que faltaba es el TERCERO. Hasta aqui solo habia "hay restriccion
+   declarada" y "no hay nada", y ese "no hay nada" se comportaba como si el
+   cliente no tuviera limite alguno — que es justo donde se cometen los dos
+   errores: elegir una actividad muy por encima de sus aptitudes, y elegirla muy
+   por debajo, que tampoco describe la sesion que ocurrio.
+
+   Se cruzan DOS fuentes independientes, y ninguna es una inferencia mia:
+     A — el reducido, en prosa (pools.background).
+     B — las etiquetas que el sistema YA tiene: los nombres de los replacements,
+         las actividades documentadas para cada uno y las que autoriza la
+         agencia. No es prosa; es la lista cerrada del plan, y dice el nivel del
+         cliente sin que nadie tenga que describirlo.
+
+   Cuatro resultados, y el valor esta en los dos ultimos:
+     clear     — las dos fuentes hablan y coinciden.
+     declared  — solo habla el reducido. Sigue mandando: es el plan, no una
+                 deduccion.
+     labels    — solo hablan las etiquetas. Idem.
+     conflict  — las dos hablan y se contradicen. Eso es un defecto del reducido
+                 o de la lista de actividades: no se usa ninguna como
+                 restriccion, se avisa en el panel y se pasa al modo prudente.
+     unclear   — no habla ninguna. Modo prudente.
+
+   MODO PRUDENTE: no se adivina el nivel. Se ancla a las actividades que el
+   propio plan de este cliente ya documenta, que es la calibracion mas segura
+   disponible y no exige ninguna suposicion sobre su condicion. */
+
+/* Modalidad ALTERNATIVA leida en las etiquetas del sistema. */
+var LVL_ALT_RE = /(\bPECS\b|picture\s+exchange|\bAAC\b|augmentative|speech[-\s]generating|communication\s+(?:board|book|device|binder)|picture\s+card|visual\s+card|break\s+card|help\s+card|choice\s+board|icon\s+exchange|\bsign(?:s|ing|\s+language)\b|gestural|point(?:s|ing)?\s+to)/i;
+
+/* Repertorio VOCAL leido en las etiquetas del sistema. Deliberadamente NO
+   incluye "ask" ni "request": pedir se hace igual con PECS, y tomarlo por habla
+   convertiria a casi todos los clientes en vocales. */
+var LVL_VOC_RE = /(full\s+sentence|complete\s+sentence|verbal(?:ly)?\b|vocal(?:ly)?\b|\bsays?\b|\btells?\b|conversation|talk\s+about|wait\s+to\s+speak|opinion|recite|\bsing(?:ing|\s+along)?\b|social\s+scripts?)/i;
+
+/* Junta el texto de las etiquetas del sistema para este cliente. */
+function _clientLabelText(pools){
+  var out = [];
+  (typeof normalizeBehaviorArr === 'function' ? normalizeBehaviorArr((pools && pools.rep) || []) : []).forEach(function(b){
+    if(!b) return;
+    if(b.name) out.push(String(b.name));
+    if(b.act)  out.push(String(b.act));
+  });
+  var pa = (pools && pools.progActs) || {};
+  Object.keys(pa).forEach(function(k){
+    out.push(String(k));
+    var v = pa[k];
+    if(v && v.acts) out.push([].concat(v.acts).join(' ; '));
+  });
+  return out.join(' ; ');
+}
+
+/* Las actividades que el propio plan documenta, sin repetir. Son el ancla del
+   modo prudente: el nivel del cliente medido en su propio plan. */
+function _clientAnchorActs(pools){
+  var out = [], seen = {};
+  var push = function(s){
+    String(s || '').split(/;|\n/).forEach(function(x){
+      var t = x.replace(/\s+/g,' ').trim();
+      if(t.length < 4 || t.length > 120) return;
+      var k = t.toLowerCase();
+      if(seen[k]) return;
+      seen[k] = 1; out.push(t);
+    });
+  };
+  (typeof normalizeBehaviorArr === 'function' ? normalizeBehaviorArr((pools && pools.rep) || []) : []).forEach(function(b){ if(b && b.act) push(b.act); });
+  var pa = (pools && pools.progActs) || {};
+  Object.keys(pa).forEach(function(k){ var v = pa[k]; if(v && v.acts) [].concat(v.acts).forEach(push); });
+  return out.slice(0, 10);
+}
+
+function _clientLevelCheck(pools){
+  var bg  = String((pools && pools.background) || '');
+  var lbl = _clientLabelText(pools);
+
+  // Fuente A. Una declaracion de modalidad alternativa pesa mas que una mencion
+  // de habla en la misma prosa: el reducido de un cliente con PECS habla de voz
+  // constantemente, porque la voz es la META.
+  var aAlt = CAP_NONVOCAL_RE.test(bg);
+  var a = aAlt ? 'alternative' : (LVL_VOC_RE.test(bg) ? 'vocal' : '');
+
+  // Fuente B. Las dos senales a la vez no son contradiccion: un cliente puede
+  // tener mandas con PECS y objetivos vocales. Eso no confirma ni desmiente — no
+  // es senal.
+  var bAlt = LVL_ALT_RE.test(lbl), bVoc = LVL_VOC_RE.test(lbl);
+  var b = (bAlt && bVoc) ? '' : (bAlt ? 'alternative' : (bVoc ? 'vocal' : ''));
+
+  var verdict, modality;
+  if(a && b){ if(a === b){ verdict = 'clear'; modality = a; } else { verdict = 'conflict'; modality = ''; } }
+  else if(a){ verdict = 'declared'; modality = a; }
+  else if(b){ verdict = 'labels';   modality = b; }
+  else      { verdict = 'unclear';  modality = ''; }
+
+  return {
+    verdict: verdict,
+    modality: modality,
+    cautious: (verdict === 'conflict' || verdict === 'unclear'),
+    fromAssessment: a,
+    fromLabels: b,
+    declared: _clientCapLines(pools),
+    anchor: _clientAnchorActs(pools)
+  };
+}
+
 /* Devuelve las frases del reducido que declaran una restriccion, tal cual las
    escribio el analista. Se devuelve el texto original y no una etiqueta mia:
    el modelo tiene que leer el reducido, no mi interpretacion del reducido. */
@@ -11617,20 +11741,22 @@ function _clientCapLines(pools){
   return out.slice(0, 6);
 }
 
-/* Marca en el catalogo cerrado lo que exige habla vocal cuando el reducido
-   declara otra modalidad. NUNCA quita nada: devuelve la misma lista, con la
-   exigencia visible al lado. */
+/* Marca en el catalogo cerrado lo que exige habla vocal cuando el doble chequeo
+   concluye que este cliente usa otra modalidad. NUNCA quita nada: devuelve la
+   misma lista, con la exigencia visible al lado.
+   En conflicto no se marca: la marca afirmaria como cierto lo que justamente
+   esta en disputa. Ese caso lo resuelve la regla de prosa, en modo prudente. */
 function _annotateActsForClient(list, pools){
   var arr = (list || []).slice();
-  var bg = String((pools && pools.background) || '');
-  if(!CAP_NONVOCAL_RE.test(bg)) return { list: arr, flagged: [] };
+  var chk = _clientLevelCheck(pools);
+  if(chk.modality !== 'alternative') return { list: arr, flagged: [], check: chk };
   var flagged = [];
   var out = arr.map(function(a){
     if(!ACT_VOCAL_RE.test(String(a||''))) return a;
     flagged.push(a);
-    return a + '   [REQUIRES VOCAL SPEECH — this client’s assessment documents a different communication modality; use it only if the response can be emitted in THAT modality]';
+    return a + '   [REQUIRES VOCAL SPEECH — this client’s documentation shows a different communication modality; use it only if the response can be emitted in THAT modality]';
   });
-  return { list: out, flagged: flagged };
+  return { list: out, flagged: flagged, check: chk };
 }
 
 /* La regla de prosa. Es la palanca principal, igual que con el entorno: el
@@ -11638,16 +11764,49 @@ function _annotateActsForClient(list, pools){
    actividades de una nota vienen del texto libre del reducido o las compone el
    modelo. */
 function _activityFitsClientRule(pools){
-  var lines = _clientCapLines(pools);
-  var head = 'ACTIVITIES MUST FIT THIS CLIENT (MANDATORY): an activity that fits the setting can still be one this client cannot perform. Every activity, material and task named in this note has to be one this client could actually carry out with the repertoire and the communication modality the reduced assessment documents.\n'
-    + '- THE REDUCED ASSESSMENT IS THE ONLY AUTHORITY on what this client can and cannot yet do. Never infer a limitation from a diagnosis, from an age, or from a general assumption about the population: if the assessment does not state it, it is not a limitation for this note. And never contradict what the assessment does state.\n'
-    + '- WHEN A PROGRAM’S USUAL ACTIVITY DEMANDS A REPERTOIRE THIS CLIENT DOES NOT YET HAVE, do not drop the program and do not document the client performing it. Document the SAME target taught through a vehicle the client’s documented modality supports — a mand taught through the picture-exchange or device the assessment names rather than through speech, a matching target run with objects rather than with printed words, a motor task at the level of assistance the assessment documents.\n'
-    + '- AN ACQUISITION PROGRAM IS ALLOWED TO TARGET A SKILL THE CLIENT DOES NOT YET HAVE — that is what teaching is. The error is documenting the client ALREADY DOING, unaided, something the assessment says is not in their repertoire. Teaching it with the documented prompt level is correct; asserting it as an independent performance is not.\n'
+  var chk = _clientLevelCheck(pools);
+  var out = 'ACTIVITIES MUST FIT THIS CLIENT (MANDATORY): an activity that fits the setting can still be one this client cannot perform. Every activity, material and task named in this note has to be one this client could actually carry out with the repertoire and the communication modality this client’s documentation shows.\n'
+    + '- THE REDUCED ASSESSMENT IS THE ONLY AUTHORITY on what this client can and cannot yet do. Never infer a limitation from a diagnosis, from an age, or from a general assumption about the population: if the documentation does not state it, it is not a limitation for this note. And never contradict what it does state.\n'
+    + '- WHEN A PROGRAM’S USUAL ACTIVITY DEMANDS A REPERTOIRE THIS CLIENT DOES NOT YET HAVE, do not drop the program and do not document the client performing it. Document the SAME target taught through a vehicle the client’s documented modality supports — a mand taught through the picture-exchange or device the documentation names rather than through speech, a matching target run with objects rather than with printed words, a motor task at the level of assistance documented.\n'
+    + '- AN ACQUISITION PROGRAM IS ALLOWED TO TARGET A SKILL THE CLIENT DOES NOT YET HAVE — that is what teaching is. The error is documenting the client ALREADY DOING, unaided, something the documentation says is not in their repertoire. Teaching it with the documented prompt level is correct; asserting it as an independent performance is not.\n'
     + '- NEVER WRITE ABOUT WHAT THE CLIENT CANNOT DO. This rule governs which activity gets selected, never the wording of the note. Do not write deficits, inabilities, levels of functioning, or any characterisation of the client. Document the activity that was run and the observable response.\n';
-  if(!lines.length) return head;
-  return head
-    + '- WHAT THIS CLIENT’S REDUCED ASSESSMENT STATES (verbatim from the assessment; treat it as the constraint on activity selection, and do not reproduce these sentences in the note):\n'
-    + lines.map(function(l){ return '    • ' + l; }).join('\n') + '\n';
+
+  /* En conflicto se retiran del bloque SOLO las frases que hablan de modalidad,
+     que son las que estan en disputa. Las demas — motricidad, atencion, lo que
+     sea — no lo estan y siguen mandando. Entregar la frase en disputa como
+     "restriccion" y decir tres lineas mas abajo que no se use es contradecirse
+     dentro del mismo prompt. */
+  var _decl = chk.verdict === 'conflict'
+    ? chk.declared.filter(function(l){ return !CAP_NONVOCAL_RE.test(l) && !LVL_VOC_RE.test(l); })
+    : chk.declared;
+  if(_decl.length){
+    out += '- WHAT THIS CLIENT’S REDUCED ASSESSMENT STATES (verbatim; treat it as the constraint on activity selection, and do not reproduce these sentences in the note):\n'
+        + _decl.map(function(l){ return '    • ' + l; }).join('\n') + '\n';
+  }
+
+  /* El ancla. En conflicto sirve para el NIVEL DE EXIGENCIA pero no para la
+     modalidad: parte de esta misma lista es lo que contradice al reducido, asi
+     que tomarla como modelo de modalidad seria elegir un bando. */
+  if(chk.anchor.length){
+    out += (chk.verdict === 'conflict'
+      ? '- THE ACTIVITIES THIS CLIENT’S OWN PLAN DOCUMENTS. Read them for the LEVEL OF DEMAND this client works at, and for nothing else: part of this same list is what disagrees with the assessment, so it does not establish which communication modality to use:\n'
+      : '- THE ACTIVITIES THIS CLIENT’S OWN PLAN ALREADY DOCUMENTS — use them as the CALIBRATION of what this client works at. An activity of roughly this demand is safe; one clearly beyond it, or clearly more basic than it, is not:\n')
+        + chk.anchor.map(function(l){ return '    • ' + l; }).join('\n') + '\n';
+  }
+
+  if(chk.verdict === 'conflict'){
+    out += '- THE TWO SOURCES OF INFORMATION ABOUT THIS CLIENT DISAGREE ON THE COMMUNICATION MODALITY: the written assessment points to one and the client’s documented programs and activities point to the other. NEITHER is used as a constraint here and you must not resolve the disagreement yourself — picking a side is what produces the wrong note.\n'
+        + '- SELECT THE ACTIVITY THAT WORKS EITHER WAY. Do not choose one whose core IS the contested modality — not an activity built on speaking (conversation, asking questions, telling, an opinion, reciting), and not one built on exchanging a picture, card or device. Choose a vehicle whose target can be emitted in either modality, and describe the response by what was observed, without naming the modality at all.\n';
+  }
+
+  if(chk.cautious){
+    out += '- THE DOCUMENTATION DOES NOT ESTABLISH THIS CLIENT’S LEVEL, so do not guess it — in EITHER direction. Do not select an activity that presupposes a repertoire nothing in this client’s documentation shows (extended conversation, reading or writing connected text, independent multi-step work, group games with rules). And do not select one clearly below the level of the programs this client is actually running: an activity more basic than the documented ones is as wrong as one above them, and it describes a session that did not happen.\n'
+        + (chk.verdict === 'conflict'
+            ? '- IN THIS SITUATION THE SAFE CHOICE IS THE PLAINEST ONE: the vehicle that carries the target and presupposes nothing — the materials and the routine themselves, at the prompt level the plan documents. Never fill the gap with an assumption about the client.\n'
+            : '- IN THIS SITUATION THE SAFE CHOICE IS THE DOCUMENTED ONE. Prefer an activity the plan already names for this program' + (chk.anchor.length ? ' — the list above' : '') + '. If none fits the session, choose the plainest vehicle that carries the target and presupposes nothing: the materials and the routine themselves, at the prompt level the plan documents. Never fill the gap with an assumption about the client.\n');
+  }
+
+  return out;
 }
 
 const SCHOOL_DEMAND_SOURCE_RULE = `WHO PRESENTS AN ACADEMIC DEMAND (ABSOLUTE — applies to every note type and every place of service):
@@ -13593,7 +13752,7 @@ function buildUserPrompt(ntId, clientObj, goals, dur, dt, place, summary, pools,
     /* Y la segunda dimension: la actividad que exige habla vocal cuando el
        reducido documenta otra modalidad. Se marca, no se quita — la actividad
        que exige la habilidad suele ser la que la ensena. */
-    const _nonVocal = CAP_NONVOCAL_RE.test(String((pools&&pools.background)||''));
+    const _nonVocal = _clientLevelCheck(pools).modality === 'alternative';
     const _actLines = sessionRep.filter(n=>_actMap[n]).map(n=>{
       const _parts = String(_actMap[n]).split(/;|\n/).map(x=>x.trim()).filter(Boolean);
       const _bad = _parts.filter(x=>{ const st=_activitySetting(x); return st!=='any' && st!==_placeKind(place); });
