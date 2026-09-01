@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23m · la actividad tiene que caber en el entorno de la sesion</div>
+  build 2026-08-23n · la actividad tambien tiene que caber en el cliente</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -7113,6 +7113,14 @@ async function _abaBuildOneGoal(chosen, usedThisNote, recentScheds){
       console.info('[entorno] actividades fuera del catalogo por no caber en ' + _actLoc + ': ' + _actFilt.removed.join(', '));
     }
     acts = _actFilt.kept;
+    // …y se marca —sin quitarla— la que exige habla vocal cuando el reducido de
+    // este cliente documenta otra modalidad. Aqui se anota y no se filtra: la
+    // actividad que exige la habilidad suele ser la que la ensena.
+    var _actAnn = _annotateActsForClient(acts, _poolsG);
+    if(_actAnn.flagged.length){
+      console.info('[cliente] actividades marcadas por exigir habla vocal: ' + _actAnn.flagged.join(', '));
+    }
+    acts = _actAnn.list;
     var teach = cfg.teaching || [];
     var scheds = cfg.schedules || [];
 
@@ -7138,7 +7146,8 @@ async function _abaBuildOneGoal(chosen, usedThisNote, recentScheds){
           ? 'CLOSED LIST - Activities AUTHORISED BY THE AGENCY FOR THIS PROGRAM (choose EXACTLY ' + _nAct + ', verbatim and all DIFFERENT). This list REPLACES the platform catalog: an activity outside it is not accepted for this client, however sensible it may sound.\n'
             + _pa.acts.map(function(x,i){ return (i+1)+'. '+x; }).join('\n') + '\n\n'
             + (_pa.prompt ? 'PROMPT DOCUMENTED BY THE AGENCY FOR THIS PROGRAM: ' + _pa.prompt + '. Use it unless the session actually required a different level.\n\n' : '')
-          : 'CLOSED LIST - Activities (choose EXACTLY ' + _nAct + ', verbatim and all DIFFERENT - one activity is not enough; this program must be worked through ' + _nAct + ' distinct activities):\n' + acts.map(function(x,i){ return (i+1)+'. '+x; }).join('\n') + '\n\n')
+          : 'CLOSED LIST - Activities (choose EXACTLY ' + _nAct + ', verbatim and all DIFFERENT - one activity is not enough; this program must be worked through ' + _nAct + ' distinct activities):\n' + acts.map(function(x,i){ return (i+1)+'. '+x; }).join('\n') + '\n'
+            + (_actAnn.flagged.length ? 'Text inside square brackets after an activity is a CAUTION ADDRESSED TO YOU about this client, not part of the activity name. Copy only the name that precedes the bracket, never the bracket or its content.\n' : '') + '\n')
       + ((usedThisNote && usedThisNote.length)
           ? 'ALREADY DOCUMENTED IN THIS SAME NOTE - do NOT repeat these goals or their activities; this must be a DIFFERENT goal worked on in the same session:\n' + usedThisNote.map(function(u){ return '  - goal: "' + u.goal + '" (activity: ' + u.acts + ', schedule: ' + (u.sched || 'n/a') + ')'; }).join('\n') + '\n'
             + 'Programs at different stages of their ladders do not share one schedule. If the schedules above already fit those programs, do not simply copy one of them for this one - choose what THIS program\u2019s own stage calls for.\n\n'
@@ -7158,6 +7167,7 @@ async function _abaBuildOneGoal(chosen, usedThisNote, recentScheds){
       // Criterios generales destilados: solo resuelven lo que el plan del cliente
       // no resuelve. Van DESPUES del perfil por eso mismo.
       + _activitySettingRule((document.getElementById('abaStartLoc')||{}).value || '') + '\n\n'
+      + _activityFitsClientRule(_poolsG) + '\n\n'
       + KB_FRAME_RULE + '\n\n'
       + KB_SCHEDULE_STAGE_RULE + '\n\n'
       + KB_PROMPT_HIERARCHY_RULE + '\n\n'
@@ -11548,6 +11558,98 @@ function _activitySettingRule(place){
     + '- Do not import the routines of another setting into this one. An activity that needs a home, or one that needs a classroom, is only documented where that place is the place of service.\n';
 }
 
+/* ── COHERENCIA DE LA ACTIVIDAD CON EL CLIENTE ─────────────────────────────
+   Segunda dimension del mismo problema del entorno. Una actividad puede caber
+   en el sitio y aun asi no caber en el cliente: por su repertorio hay cosas que
+   todavia no puede hacer, y documentarlas describe una sesion que no ocurrio.
+
+   DOS DECISIONES DE DISENO, deliberadas:
+
+   1. EL REDUCIDO ES LA UNICA AUTORIDAD. Nada aqui se deduce del diagnostico ni
+      de la edad. Solo cuenta lo que el background del assessment reducido dice
+      con todas las letras. Si el reducido no declara una limitacion, para el
+      sistema esa limitacion no existe.
+
+   2. AQUI SE ANOTA, NO SE QUITA — al reves que con el entorno. Con el entorno el
+      corte es limpio: una cama no existe en un aula. Con el repertorio no lo es,
+      porque la actividad que exige una habilidad que el cliente no tiene es
+      muchas veces la actividad que ENSENA esa habilidad — un programa de mandas
+      para un cliente no vocal se corre con PECS o AAC, no se cancela. Filtrar
+      quitaria justo los programas de adquisicion. Se marca la exigencia y se
+      deja la decision, que es lo que un catalogo cerrado permite. */
+
+/* Actividades del catalogo cuyo NUCLEO es habla vocal. La lista es corta a
+   proposito: 9 de las 163 del catalogo real de AbaMatrix. Como solo anota,
+   pasarse un poco cuesta poco; quedarse corto deja pasar el error. */
+var ACT_VOCAL_RE = /(\btalk about\b|\bwait to speak\b|\basking questions\b|\bconversation\b|\bopinion\b|\brecite\b|\bsing(?:ing|\s+along)?\b|\bsay\b|social scripts?|\bscripted\b|comprehension prompts?)/i;
+
+/* Marcadores de una restriccion de repertorio DECLARADA. No son diagnosticos:
+   son las formas en que un reducido escribe "esto todavia no". */
+var CAP_DECL_RE = /(non[-\s]?vocal|non[-\s]?verbal|pre[-\s]?verbal|minimally\s+(?:vocal|verbal)|limited\s+vocal|no\s+vocal\s+(?:speech|language|repertoire)|\bAAC\b|augmentative|\bPECS\b|picture\s+exchange|speech[-\s]generating|sign\s+language|gestural\s+communication|communicat(?:es|ion)\s+(?:is\s+)?(?:through|via|using|primarily|level|modality)|pre[-\s]?literate|pre[-\s]?academic|does\s+not\s+(?:yet\s+)?(?:read|write|speak|use|tolerate|engage|respond|imitate)|is\s+not\s+(?:yet\s+)?(?:able|reading|writing|imitating)|not\s+yet\b|unable\s+to|barrier(?:s)?\s+to\s+learning|requires\s+(?:full|partial|hand[-\s]over[-\s]hand|constant)|fine\s+motor|gross\s+motor|motor\s+limitation|emerging)/i;
+
+/* Una frase que declara la AUSENCIA de una limitacion no es una limitacion. Sin
+   esto, "no barriers to learning are documented" entraba en la lista de
+   restricciones y decia lo contrario de lo que dice el reducido. */
+var CAP_NEG_RE = /\b(?:no|none|without|not)\s+(?:\w+\s+){0,2}(?:barrier|limitation|restriction|concern|deficit)s?\b|\bnone\s+(?:are\s+)?(?:documented|reported|noted|identified)\b|\bno\s+(?:known|reported|documented)\b/ig;
+
+/* Marcador de una restriccion de MODALIDAD VOCAL en concreto — el unico caso en
+   que se puede senalar una actividad del catalogo pieza por pieza. */
+var CAP_NONVOCAL_RE = /(non[-\s]?vocal|non[-\s]?verbal|pre[-\s]?verbal|minimally\s+(?:vocal|verbal)|limited\s+vocal|no\s+vocal\s+(?:speech|language|repertoire)|\bAAC\b|augmentative|\bPECS\b|picture\s+exchange|speech[-\s]generating|sign\s+language|gestural\s+communication)/i;
+
+/* Devuelve las frases del reducido que declaran una restriccion, tal cual las
+   escribio el analista. Se devuelve el texto original y no una etiqueta mia:
+   el modelo tiene que leer el reducido, no mi interpretacion del reducido. */
+function _clientCapLines(pools){
+  var bg = String((pools && pools.background) || '').trim();
+  if(!bg) return [];
+  var out = [], seen = {};
+  bg.split(/[.;\n]+/).forEach(function(s){
+    var t = s.replace(/\s+/g,' ').trim();
+    if(t.length < 12 || t.length > 240) return;
+    // Se prueba sobre la frase SIN sus fragmentos negados: asi una frase que solo
+    // dice "no hay barreras" cae, y una que declara una restriccion real y de paso
+    // niega otra se conserva entera.
+    if(!CAP_DECL_RE.test(t.replace(CAP_NEG_RE, ' '))) return;
+    var k = t.toLowerCase();
+    if(seen[k]) return;
+    seen[k] = 1; out.push(t);
+  });
+  return out.slice(0, 6);
+}
+
+/* Marca en el catalogo cerrado lo que exige habla vocal cuando el reducido
+   declara otra modalidad. NUNCA quita nada: devuelve la misma lista, con la
+   exigencia visible al lado. */
+function _annotateActsForClient(list, pools){
+  var arr = (list || []).slice();
+  var bg = String((pools && pools.background) || '');
+  if(!CAP_NONVOCAL_RE.test(bg)) return { list: arr, flagged: [] };
+  var flagged = [];
+  var out = arr.map(function(a){
+    if(!ACT_VOCAL_RE.test(String(a||''))) return a;
+    flagged.push(a);
+    return a + '   [REQUIRES VOCAL SPEECH — this client’s assessment documents a different communication modality; use it only if the response can be emitted in THAT modality]';
+  });
+  return { list: out, flagged: flagged };
+}
+
+/* La regla de prosa. Es la palanca principal, igual que con el entorno: el
+   catalogo cerrado solo alcanza a la seccion de AbaMatrix, y la mayoria de las
+   actividades de una nota vienen del texto libre del reducido o las compone el
+   modelo. */
+function _activityFitsClientRule(pools){
+  var lines = _clientCapLines(pools);
+  var head = 'ACTIVITIES MUST FIT THIS CLIENT (MANDATORY): an activity that fits the setting can still be one this client cannot perform. Every activity, material and task named in this note has to be one this client could actually carry out with the repertoire and the communication modality the reduced assessment documents.\n'
+    + '- THE REDUCED ASSESSMENT IS THE ONLY AUTHORITY on what this client can and cannot yet do. Never infer a limitation from a diagnosis, from an age, or from a general assumption about the population: if the assessment does not state it, it is not a limitation for this note. And never contradict what the assessment does state.\n'
+    + '- WHEN A PROGRAM’S USUAL ACTIVITY DEMANDS A REPERTOIRE THIS CLIENT DOES NOT YET HAVE, do not drop the program and do not document the client performing it. Document the SAME target taught through a vehicle the client’s documented modality supports — a mand taught through the picture-exchange or device the assessment names rather than through speech, a matching target run with objects rather than with printed words, a motor task at the level of assistance the assessment documents.\n'
+    + '- AN ACQUISITION PROGRAM IS ALLOWED TO TARGET A SKILL THE CLIENT DOES NOT YET HAVE — that is what teaching is. The error is documenting the client ALREADY DOING, unaided, something the assessment says is not in their repertoire. Teaching it with the documented prompt level is correct; asserting it as an independent performance is not.\n'
+    + '- NEVER WRITE ABOUT WHAT THE CLIENT CANNOT DO. This rule governs which activity gets selected, never the wording of the note. Do not write deficits, inabilities, levels of functioning, or any characterisation of the client. Document the activity that was run and the observable response.\n';
+  if(!lines.length) return head;
+  return head
+    + '- WHAT THIS CLIENT’S REDUCED ASSESSMENT STATES (verbatim from the assessment; treat it as the constraint on activity selection, and do not reproduce these sentences in the note):\n'
+    + lines.map(function(l){ return '    • ' + l; }).join('\n') + '\n';
+}
+
 const SCHOOL_DEMAND_SOURCE_RULE = `WHO PRESENTS AN ACADEMIC DEMAND (ABSOLUTE — applies to every note type and every place of service):
 1. School-profile activities — worksheets, homework, classroom assignments, academic instruction, reading or writing tasks, school materials, curriculum tasks — are ALWAYS presented by the natural adult of that context: the teacher, the classroom assistant/aide, or the caregiver. This holds whether the session takes place at the school or at home: what triggers the rule is the ACADEMIC nature of the activity, not the location.
 2. NEVER write that the therapist (RBT, technician, BCaBA, BCBA or analyst) presented, assigned, delivered or instructed an academic task. Forbidden constructions: "the RBT presented the worksheet", "the RBT assigned the math task", "the technician delivered the writing demand", "the BCBA presented the homework". The therapist does not deliver academic instruction — that is outside their role, and documenting it describes a service other than the one billed.
@@ -13488,11 +13590,18 @@ function buildUserPrompt(ntId, clientObj, goals, dur, dt, place, summary, pools,
     /* Las actividades del reducido son texto libre y pueden venir atadas a un
        entorno ("clean-up routine in the bedroom"). Se marcan para que el modelo
        sepa cual no puede usar aqui, en vez de dejarle deducirlo. */
+    /* Y la segunda dimension: la actividad que exige habla vocal cuando el
+       reducido documenta otra modalidad. Se marca, no se quita — la actividad
+       que exige la habilidad suele ser la que la ensena. */
+    const _nonVocal = CAP_NONVOCAL_RE.test(String((pools&&pools.background)||''));
     const _actLines = sessionRep.filter(n=>_actMap[n]).map(n=>{
-      const _bad = String(_actMap[n]).split(/;|\n/).map(x=>x.trim()).filter(Boolean)
-        .filter(x=>{ const st=_activitySetting(x); return st!=='any' && st!==_placeKind(place); });
+      const _parts = String(_actMap[n]).split(/;|\n/).map(x=>x.trim()).filter(Boolean);
+      const _bad = _parts.filter(x=>{ const st=_activitySetting(x); return st!=='any' && st!==_placeKind(place); });
+      const _voc = _nonVocal ? _parts.filter(x=>ACT_VOCAL_RE.test(x)) : [];
       return `  - ${n}: ${_actMap[n]}` + (_bad.length
         ? `   [NOT USABLE AT THIS PLACE OF SERVICE — teach this program through another routine that exists here: ${_bad.join('; ')}]`
+        : '') + (_voc.length
+        ? `   [REQUIRES VOCAL SPEECH — this client's assessment documents a different communication modality; run the same target in THAT modality: ${_voc.join('; ')}]`
         : '');
     });
     const _actBlock = _actLines.length
@@ -13560,7 +13669,7 @@ function buildUserPrompt(ntId, clientObj, goals, dur, dt, place, summary, pools,
   const _dateField = (dt==='[DATE — analyst to complete]' || !dt)
     ? 'DATE: NOT FOR NOTE — ABSOLUTE PROHIBITION: Do NOT write any date, date placeholder, "[DATE]", "occurred on", "this session on", or any date-related phrase anywhere in the note body. The analyst enters the date manually after the note is generated; omit it entirely.'
     : `DATE: ${dt}`;
-  const base=`${_variantLine}${variationNote}${rotNote}${participantsNote}${prevPlanLine}${envLine}${medLine}${crisisLine}${freqNote}${emergingLine}${dataOnly156Flag}${_priorCtx}\n\nPRIVACY REMINDER: No diagnosis, no PII, no proper names.\n\nCRITICAL — DATA INTEGRITY: Never invent specific numerical data (percentages, exact counts, fidelity scores, IOA percentages, etc.) unless explicitly provided in the session frequency data or trial data above. ZERO-EPISODE RULE: Never write 'zero episodes,' 'no occurrences,' 'was not observed,' or 'did not occur' for any behavior. If a behavior had no documented occurrences in a session, it is simply not mentioned. There is no note content for a behavior that did not occur. If no numeric data was provided for a behavior or program, use qualitative observable descriptions only: "consistent prompt delivery was observed," "the client responded to gestural prompts," "the behavior occurred during demand contexts." Do not estimate, approximate, or fabricate any number, IN DIGITS OR IN WORDS: "four out of five", "eighty percent" and "on three occasions" are fabricated data exactly as 4/5, 80% and 3 are.\n\nABSOLUTE PROHIBITION — INVENTED BASELINES AND COMPARATIVE STATISTICS: NEVER write any of the following unless the exact number was explicitly provided in the session data above: weekly averages ("X incidents per week"), monthly averages, named-period baselines ("October average," "baseline of X"), improvement percentages ("representing a X% improvement"), rate comparisons ("higher than the baseline of X"), or any numerical claim presented as a trend, average, or historical comparison. These numbers do not exist in the session data — writing them is data fabrication and constitutes a Medicaid fraud risk. If no baseline or comparative data was provided, describe behavior in purely qualitative, session-specific observable terms only.\n\nPLAN FIDELITY WITH ERROR FILTERING (MANDATORY): Use the behaviors, interventions, replacement programs, teaching methods, prompts, and reinforcers from the clinical context below — BUT apply this filter: if the plan contains prohibited terms (calming, sensory, self-regulation, etc.), planned ignoring for aggression/SIB/elopement, DRL for dangerous behaviors, or any non-evidence-based procedure, silently exclude those items from the note. Do not replicate plan errors. Document only what is clinically defensible and audit-safe.\n\nFUNCTION-MATCHED REINFORCEMENT AND REPLACEMENT (MANDATORY): Every reinforcer and every consequence procedure must be delivered in the currency of the behavior's documented function. Attention-maintained behavior is reinforced with social attention; Non-Contingent Reinforcement (NCR) for an attention function delivers non-contingent ATTENTION on a time-based schedule, never tangibles or edibles. Escape-maintained behavior is reinforced with a break or removal of the demand. Tangible-maintained behavior is reinforced with access to the item. Automatic-maintained behavior is reinforced with a comparable, matched stimulation alternative. Never pair an attention or escape function with a tangible or edible reinforcer. ${_pairingClause}\n\n${FN_INTERVENTION_RULE}\n\n${KB_FRAME_RULE}\n\n${KB_DIFFERENTIAL_RULE}\n\n${NO_CROSS_SESSION_RULE}\n\n${OUTPUT_ONLY_NOTE_RULE}\n\n${SESSION_EVENT_SOURCING_RULE}\n\n${SCHOOL_DEMAND_SOURCE_RULE}\n\n${_placeCoherenceRule(place, partStr || '')}\n\n${_activitySettingRule(place)}\n\n${OPERATOR_TEXT_LANGUAGE_RULE}\n\n${(typeof _universalAnalystBlock === 'function') ? _universalAnalystBlock(clientObj && clientObj.id) : ''}${(typeof _recurringDefectsBlock === 'function') ? _recurringDefectsBlock(clientObj && clientObj.id) : ''}\n\n${(typeof _retiredPromptBlock === 'function') ? _retiredPromptBlock(clientObj && clientObj.id) : ''}\n\n${String(ntId).indexOf('97155')===0 ? CAREGIVER_ROLE_97155_RULE + '\\n\\n' + RBT_SEQUENCE_RULE + '\\n\\n' + RBT_ANTECEDENT_RULE + '\\n\\n' + KB_HIGH_P_RULE + '\\n\\n' + KB_PROMPT_HIERARCHY_RULE + '\\n\\n' : ''}\n\nPROHIBITED NARRATIVE TERMINOLOGY (MANDATORY - applies to the prose you write): Never write any of these words or their variants anywhere in the note: calm, calmly, calming, relax, relaxation, relaxing, sensory, self-regulation, self-soothing, coping, mindfulness, meditation, yoga, deep breathing, breathing technique, problem solving, conflict resolution, social stories, social narratives, anger management, art therapy, frustration, frustrated, stress, anxiety, anxious, upset, overwhelmed, empathy, de-escalation, desensitization, response cost. Also never write internal-state or unsupported-progress language about the client or the caregiver: understanding, understood, comprehension, aware, awareness, realize, improved, improvement, better, enhanced, mastery, mastered, competent, competency, proficiency, progress, growth, gains, advancement, effective, effectiveness, successful, or comparative claims such as 'more independent', unless the exact supporting data was provided in the session data above. Describe only what was observed and done. TWO-LAYER RULE: this ban applies to the prose the system generates. If one of these words is part of the exact program or behavior NAME documented in the assessment or clinical context, that name may be reproduced verbatim as a closed-list citation, but the surrounding prose must never use the term and must never build a mentalist or emotional description around it.\n\n${ctx}CLIENT PSEUDONYM: ${clientObj.name}\n${_dateField}\n${durLine}${(String(ntId).indexOf('97155')===0||String(ntId).indexOf('97156')===0||ntId==='supervision'||ntId==='supervision-bcaba')?_shortSessionBlock(dur, ntId):''}\nPLACE OF SERVICE: ${place}`;
+  const base=`${_variantLine}${variationNote}${rotNote}${participantsNote}${prevPlanLine}${envLine}${medLine}${crisisLine}${freqNote}${emergingLine}${dataOnly156Flag}${_priorCtx}\n\nPRIVACY REMINDER: No diagnosis, no PII, no proper names.\n\nCRITICAL — DATA INTEGRITY: Never invent specific numerical data (percentages, exact counts, fidelity scores, IOA percentages, etc.) unless explicitly provided in the session frequency data or trial data above. ZERO-EPISODE RULE: Never write 'zero episodes,' 'no occurrences,' 'was not observed,' or 'did not occur' for any behavior. If a behavior had no documented occurrences in a session, it is simply not mentioned. There is no note content for a behavior that did not occur. If no numeric data was provided for a behavior or program, use qualitative observable descriptions only: "consistent prompt delivery was observed," "the client responded to gestural prompts," "the behavior occurred during demand contexts." Do not estimate, approximate, or fabricate any number, IN DIGITS OR IN WORDS: "four out of five", "eighty percent" and "on three occasions" are fabricated data exactly as 4/5, 80% and 3 are.\n\nABSOLUTE PROHIBITION — INVENTED BASELINES AND COMPARATIVE STATISTICS: NEVER write any of the following unless the exact number was explicitly provided in the session data above: weekly averages ("X incidents per week"), monthly averages, named-period baselines ("October average," "baseline of X"), improvement percentages ("representing a X% improvement"), rate comparisons ("higher than the baseline of X"), or any numerical claim presented as a trend, average, or historical comparison. These numbers do not exist in the session data — writing them is data fabrication and constitutes a Medicaid fraud risk. If no baseline or comparative data was provided, describe behavior in purely qualitative, session-specific observable terms only.\n\nPLAN FIDELITY WITH ERROR FILTERING (MANDATORY): Use the behaviors, interventions, replacement programs, teaching methods, prompts, and reinforcers from the clinical context below — BUT apply this filter: if the plan contains prohibited terms (calming, sensory, self-regulation, etc.), planned ignoring for aggression/SIB/elopement, DRL for dangerous behaviors, or any non-evidence-based procedure, silently exclude those items from the note. Do not replicate plan errors. Document only what is clinically defensible and audit-safe.\n\nFUNCTION-MATCHED REINFORCEMENT AND REPLACEMENT (MANDATORY): Every reinforcer and every consequence procedure must be delivered in the currency of the behavior's documented function. Attention-maintained behavior is reinforced with social attention; Non-Contingent Reinforcement (NCR) for an attention function delivers non-contingent ATTENTION on a time-based schedule, never tangibles or edibles. Escape-maintained behavior is reinforced with a break or removal of the demand. Tangible-maintained behavior is reinforced with access to the item. Automatic-maintained behavior is reinforced with a comparable, matched stimulation alternative. Never pair an attention or escape function with a tangible or edible reinforcer. ${_pairingClause}\n\n${FN_INTERVENTION_RULE}\n\n${KB_FRAME_RULE}\n\n${KB_DIFFERENTIAL_RULE}\n\n${NO_CROSS_SESSION_RULE}\n\n${OUTPUT_ONLY_NOTE_RULE}\n\n${SESSION_EVENT_SOURCING_RULE}\n\n${SCHOOL_DEMAND_SOURCE_RULE}\n\n${_placeCoherenceRule(place, partStr || '')}\n\n${_activitySettingRule(place)}\n\n${_activityFitsClientRule(pools)}\n\n${OPERATOR_TEXT_LANGUAGE_RULE}\n\n${(typeof _universalAnalystBlock === 'function') ? _universalAnalystBlock(clientObj && clientObj.id) : ''}${(typeof _recurringDefectsBlock === 'function') ? _recurringDefectsBlock(clientObj && clientObj.id) : ''}\n\n${(typeof _retiredPromptBlock === 'function') ? _retiredPromptBlock(clientObj && clientObj.id) : ''}\n\n${String(ntId).indexOf('97155')===0 ? CAREGIVER_ROLE_97155_RULE + '\\n\\n' + RBT_SEQUENCE_RULE + '\\n\\n' + RBT_ANTECEDENT_RULE + '\\n\\n' + KB_HIGH_P_RULE + '\\n\\n' + KB_PROMPT_HIERARCHY_RULE + '\\n\\n' : ''}\n\nPROHIBITED NARRATIVE TERMINOLOGY (MANDATORY - applies to the prose you write): Never write any of these words or their variants anywhere in the note: calm, calmly, calming, relax, relaxation, relaxing, sensory, self-regulation, self-soothing, coping, mindfulness, meditation, yoga, deep breathing, breathing technique, problem solving, conflict resolution, social stories, social narratives, anger management, art therapy, frustration, frustrated, stress, anxiety, anxious, upset, overwhelmed, empathy, de-escalation, desensitization, response cost. Also never write internal-state or unsupported-progress language about the client or the caregiver: understanding, understood, comprehension, aware, awareness, realize, improved, improvement, better, enhanced, mastery, mastered, competent, competency, proficiency, progress, growth, gains, advancement, effective, effectiveness, successful, or comparative claims such as 'more independent', unless the exact supporting data was provided in the session data above. Describe only what was observed and done. TWO-LAYER RULE: this ban applies to the prose the system generates. If one of these words is part of the exact program or behavior NAME documented in the assessment or clinical context, that name may be reproduced verbatim as a closed-list citation, but the surrounding prose must never use the term and must never build a mentalist or emotional description around it.\n\n${ctx}CLIENT PSEUDONYM: ${clientObj.name}\n${_dateField}\n${durLine}${(String(ntId).indexOf('97155')===0||String(ntId).indexOf('97156')===0||ntId==='supervision'||ntId==='supervision-bcaba')?_shortSessionBlock(dur, ntId):''}\nPLACE OF SERVICE: ${place}`;
 
   const tmplStr = sessTmpl ? sessionTemplateToPromptSection(sessTmpl) : '';
   // Use CASP checkbox sections if provided; fall back to session template
@@ -16897,6 +17006,16 @@ function _polishNoteText(text){
   // La frase que quedaba detras del rotulo empieza ahora el parrafo: mayuscula.
   t = t.replace(/(^|\n)([a-z])/g, function(m, p1, p2){ return p1 + p2.toUpperCase(); });
   mark('encabezado de sección eliminado ("Plan for Next Session:")', b);
+
+  /* 6c. AVISOS INTERNOS QUE SE COLARON EN LA NOTA. Al catalogo de actividades se
+         le pega entre corchetes una advertencia dirigida al modelo — que la
+         actividad no cabe en este sitio, o que exige habla vocal en un cliente
+         que usa otra modalidad. El prompt dice que no se copien; esto es el
+         seguro por si se copian igual. Lista cerrada: solo los avisos que
+         escribe el propio sistema. */
+  b = t;
+  t = t.replace(/[ \t]*\[\s*(?:NOT USABLE AT THIS PLACE OF SERVICE|REQUIRES VOCAL SPEECH)\b[^\]]*\]/gi, '');
+  mark('aviso interno del catálogo eliminado de la nota', b);
 
   // 7. Leftovers from the substitutions above.
   b = t;
