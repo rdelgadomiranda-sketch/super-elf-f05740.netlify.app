@@ -282,7 +282,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23k · sin el rotulo Plan for Next Session en las notas</div>
+  build 2026-08-23m · la actividad tiene que caber en el entorno de la sesion</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -7106,6 +7106,13 @@ async function _abaBuildOneGoal(chosen, usedThisNote, recentScheds){
     var acts = (cfg.activities||[]).filter(function(a){
       return !/sensory|conflict resolution|art therapy|mindful/i.test(a);
     });
+    // …y las que no caben en el sitio donde ocurrio la sesion.
+    var _actLoc = (document.getElementById('abaStartLoc')||{}).value || '';
+    var _actFilt = _filterActivitiesByPlace(acts, _actLoc);
+    if(_actFilt.removed.length){
+      console.info('[entorno] actividades fuera del catalogo por no caber en ' + _actLoc + ': ' + _actFilt.removed.join(', '));
+    }
+    acts = _actFilt.kept;
     var teach = cfg.teaching || [];
     var scheds = cfg.schedules || [];
 
@@ -7150,6 +7157,7 @@ async function _abaBuildOneGoal(chosen, usedThisNote, recentScheds){
       + 'If the profile states a thinning plan, follow it. Selecting Continuous Reinforcement for every program is a documentation error: pick what this program\u2019s stage actually calls for.\n\n'
       // Criterios generales destilados: solo resuelven lo que el plan del cliente
       // no resuelve. Van DESPUES del perfil por eso mismo.
+      + _activitySettingRule((document.getElementById('abaStartLoc')||{}).value || '') + '\n\n'
       + KB_FRAME_RULE + '\n\n'
       + KB_SCHEDULE_STAGE_RULE + '\n\n'
       + KB_PROMPT_HIERARCHY_RULE + '\n\n'
@@ -11477,6 +11485,69 @@ function _placeCoherenceRule(place, participantsTxt){
     + '2. THIS SESSION TOOK PLACE AT: ' + place + '. Do not import the adults of another setting into this one: no school staff and no family member may appear unless they are explicitly listed as present above.\n';
 }
 
+
+/* ── LA ACTIVIDAD TIENE QUE CABER EN EL ENTORNO ─────────────────────────────
+   Lo reporto Sara Sofia: salian actividades que solo se hacen en casa dentro de
+   notas de escuela, y al reves. Es la misma familia que los participantes por
+   lugar y que quien presenta la demanda academica — el sistema sabe DONDE fue la
+   sesion y no lo estaba usando para decidir QUE se documenta.
+
+   Los marcadores son deliberadamente cortos: solo cuenta lo que nombra un LUGAR
+   U OBJETO QUE NO EXISTE en el otro entorno. Medido sobre el catalogo real de
+   AbaMatrix, 10 de 163 actividades quedan atadas a un entorno y 153 son neutras
+   — que es lo correcto: la mayoria se hacen igual en los dos sitios. Clasificar
+   de mas quitaria actividades validas, que es peor que el problema.
+   Quedan fuera a proposito "kitchen" (las cocinas de juguete son material de
+   aula), "baking/cooking" (la plataforma los ofrece juntos y el segundo si se
+   hace en clase) y "educational songs" (tambien se cantan en casa).           */
+var ACT_HOME_RE = /\b(bedtime|bath(?:time|ing|room routine)?|shower|pajama|backyard|garden(?:ing)?|household|laundry|bedroom|chore chart|living room|couch|sofa|at home|fort with pillows|home routine)\b/i;
+var ACT_SCHOOL_RE = /\b(classroom|circle time|lin(?:e|ing) up|raise[- ]?(?:your )?hand|whiteboard|hallway|recess|cafeteria|school bus|peers?|classmates?|teacher|homework|worksheet|group instruction)\b/i;
+
+function _activitySetting(name){
+  var t = String(name||'');
+  var h = ACT_HOME_RE.test(t), s = ACT_SCHOOL_RE.test(t);
+  if(h && !s) return 'home';
+  if(s && !h) return 'school';
+  return 'any';
+}
+
+/* Quita del catalogo lo que no cabe en este sitio. Nunca deja la lista vacia:
+   si filtrar la vaciara, se devuelve entera — un catalogo vacio no produce una
+   nota mejor, produce ninguna. */
+function _filterActivitiesByPlace(list, place){
+  var arr = (list || []).slice();
+  var kind = (typeof _placeKind === 'function') ? _placeKind(place) : 'unknown';
+  if(kind !== 'home' && kind !== 'school') return { kept: arr, removed: [] };
+  var removed = [];
+  var kept = arr.filter(function(a){
+    var st = _activitySetting(a);
+    if(st !== 'any' && st !== kind){ removed.push(a); return false; }
+    return true;
+  });
+  if(!kept.length) return { kept: arr, removed: [] };
+  return { kept: kept, removed: removed };
+}
+
+/* La regla para la prosa. El filtro solo alcanza al catalogo cerrado; la mayoria
+   de las actividades que acaban en una nota vienen del texto libre del reducido
+   o las compone el modelo, y ahi solo llega una regla. */
+function _activitySettingRule(place){
+  var kind = (typeof _placeKind === 'function') ? _placeKind(place) : 'unknown';
+  var head = 'ACTIVITIES MUST FIT THE SETTING (MANDATORY): every activity, routine, material and task named in this note has to be one that could actually happen where this session took place (' + (place || 'the documented place of service') + ').\n';
+  if(kind === 'home'){
+    return head
+      + '- This session was at the client\'s home. Never document classroom routines or school-only arrangements: circle time, lining up, raising a hand to be called on, working at a school desk, hallway transitions, recess, the cafeteria, group instruction with classmates, or an activity that needs a teacher or peers who were not there.\n'
+      + '- If the client\'s plan documents a program whose usual activity belongs to the classroom, do NOT import the classroom routine into the home. Document the program taught through a routine that exists in this home — the same target, a setting-appropriate vehicle — or document a different program.\n';
+  }
+  if(kind === 'school'){
+    return head
+      + '- This session was in a school-type setting. Never document home routines: bedtime, bathing or showering, pajamas, the family bedroom or living room, laundry, household chores, gardening or the backyard, or any activity that needs the family home.\n'
+      + '- If the client\'s plan documents a program whose usual activity belongs to the home, do NOT import the home routine into the school. Document the program taught through a routine that exists in this setting — the same target, a setting-appropriate vehicle — or document a different program.\n';
+  }
+  return head
+    + '- Do not import the routines of another setting into this one. An activity that needs a home, or one that needs a classroom, is only documented where that place is the place of service.\n';
+}
+
 const SCHOOL_DEMAND_SOURCE_RULE = `WHO PRESENTS AN ACADEMIC DEMAND (ABSOLUTE — applies to every note type and every place of service):
 1. School-profile activities — worksheets, homework, classroom assignments, academic instruction, reading or writing tasks, school materials, curriculum tasks — are ALWAYS presented by the natural adult of that context: the teacher, the classroom assistant/aide, or the caregiver. This holds whether the session takes place at the school or at home: what triggers the rule is the ACADEMIC nature of the activity, not the location.
 2. NEVER write that the therapist (RBT, technician, BCaBA, BCBA or analyst) presented, assigned, delivered or instructed an academic task. Forbidden constructions: "the RBT presented the worksheet", "the RBT assigned the math task", "the technician delivered the writing demand", "the BCBA presented the homework". The therapist does not deliver academic instruction — that is outside their role, and documenting it describes a service other than the one billed.
@@ -13414,7 +13485,16 @@ function buildUserPrompt(ntId, clientObj, goals, dur, dt, place, summary, pools,
     // hace sonar a plantilla.
     const _actMap = {};
     normalizeBehaviorArr((pools&&pools.rep)||[]).forEach(b=>{ if(b&&b.name&&b.act) _actMap[b.name]=b.act; });
-    const _actLines = sessionRep.filter(n=>_actMap[n]).map(n=>`  - ${n}: ${_actMap[n]}`);
+    /* Las actividades del reducido son texto libre y pueden venir atadas a un
+       entorno ("clean-up routine in the bedroom"). Se marcan para que el modelo
+       sepa cual no puede usar aqui, en vez de dejarle deducirlo. */
+    const _actLines = sessionRep.filter(n=>_actMap[n]).map(n=>{
+      const _bad = String(_actMap[n]).split(/;|\n/).map(x=>x.trim()).filter(Boolean)
+        .filter(x=>{ const st=_activitySetting(x); return st!=='any' && st!==_placeKind(place); });
+      return `  - ${n}: ${_actMap[n]}` + (_bad.length
+        ? `   [NOT USABLE AT THIS PLACE OF SERVICE — teach this program through another routine that exists here: ${_bad.join('; ')}]`
+        : '');
+    });
     const _actBlock = _actLines.length
       ? `\nACTIVITIES DOCUMENTED FOR EACH REPLACEMENT PROGRAM (this client's own activities — teach each program inside one of ITS activities and name it; never invent an activity and never move an activity from one program to another):\n${_actLines.join('\n')}`
       : '';
@@ -13480,7 +13560,7 @@ function buildUserPrompt(ntId, clientObj, goals, dur, dt, place, summary, pools,
   const _dateField = (dt==='[DATE — analyst to complete]' || !dt)
     ? 'DATE: NOT FOR NOTE — ABSOLUTE PROHIBITION: Do NOT write any date, date placeholder, "[DATE]", "occurred on", "this session on", or any date-related phrase anywhere in the note body. The analyst enters the date manually after the note is generated; omit it entirely.'
     : `DATE: ${dt}`;
-  const base=`${_variantLine}${variationNote}${rotNote}${participantsNote}${prevPlanLine}${envLine}${medLine}${crisisLine}${freqNote}${emergingLine}${dataOnly156Flag}${_priorCtx}\n\nPRIVACY REMINDER: No diagnosis, no PII, no proper names.\n\nCRITICAL — DATA INTEGRITY: Never invent specific numerical data (percentages, exact counts, fidelity scores, IOA percentages, etc.) unless explicitly provided in the session frequency data or trial data above. ZERO-EPISODE RULE: Never write 'zero episodes,' 'no occurrences,' 'was not observed,' or 'did not occur' for any behavior. If a behavior had no documented occurrences in a session, it is simply not mentioned. There is no note content for a behavior that did not occur. If no numeric data was provided for a behavior or program, use qualitative observable descriptions only: "consistent prompt delivery was observed," "the client responded to gestural prompts," "the behavior occurred during demand contexts." Do not estimate, approximate, or fabricate any number, IN DIGITS OR IN WORDS: "four out of five", "eighty percent" and "on three occasions" are fabricated data exactly as 4/5, 80% and 3 are.\n\nABSOLUTE PROHIBITION — INVENTED BASELINES AND COMPARATIVE STATISTICS: NEVER write any of the following unless the exact number was explicitly provided in the session data above: weekly averages ("X incidents per week"), monthly averages, named-period baselines ("October average," "baseline of X"), improvement percentages ("representing a X% improvement"), rate comparisons ("higher than the baseline of X"), or any numerical claim presented as a trend, average, or historical comparison. These numbers do not exist in the session data — writing them is data fabrication and constitutes a Medicaid fraud risk. If no baseline or comparative data was provided, describe behavior in purely qualitative, session-specific observable terms only.\n\nPLAN FIDELITY WITH ERROR FILTERING (MANDATORY): Use the behaviors, interventions, replacement programs, teaching methods, prompts, and reinforcers from the clinical context below — BUT apply this filter: if the plan contains prohibited terms (calming, sensory, self-regulation, etc.), planned ignoring for aggression/SIB/elopement, DRL for dangerous behaviors, or any non-evidence-based procedure, silently exclude those items from the note. Do not replicate plan errors. Document only what is clinically defensible and audit-safe.\n\nFUNCTION-MATCHED REINFORCEMENT AND REPLACEMENT (MANDATORY): Every reinforcer and every consequence procedure must be delivered in the currency of the behavior's documented function. Attention-maintained behavior is reinforced with social attention; Non-Contingent Reinforcement (NCR) for an attention function delivers non-contingent ATTENTION on a time-based schedule, never tangibles or edibles. Escape-maintained behavior is reinforced with a break or removal of the demand. Tangible-maintained behavior is reinforced with access to the item. Automatic-maintained behavior is reinforced with a comparable, matched stimulation alternative. Never pair an attention or escape function with a tangible or edible reinforcer. ${_pairingClause}\n\n${FN_INTERVENTION_RULE}\n\n${KB_FRAME_RULE}\n\n${KB_DIFFERENTIAL_RULE}\n\n${NO_CROSS_SESSION_RULE}\n\n${OUTPUT_ONLY_NOTE_RULE}\n\n${SESSION_EVENT_SOURCING_RULE}\n\n${SCHOOL_DEMAND_SOURCE_RULE}\n\n${_placeCoherenceRule(place, partStr || '')}\n\n${OPERATOR_TEXT_LANGUAGE_RULE}\n\n${(typeof _universalAnalystBlock === 'function') ? _universalAnalystBlock(clientObj && clientObj.id) : ''}${(typeof _recurringDefectsBlock === 'function') ? _recurringDefectsBlock(clientObj && clientObj.id) : ''}\n\n${(typeof _retiredPromptBlock === 'function') ? _retiredPromptBlock(clientObj && clientObj.id) : ''}\n\n${String(ntId).indexOf('97155')===0 ? CAREGIVER_ROLE_97155_RULE + '\\n\\n' + RBT_SEQUENCE_RULE + '\\n\\n' + RBT_ANTECEDENT_RULE + '\\n\\n' + KB_HIGH_P_RULE + '\\n\\n' + KB_PROMPT_HIERARCHY_RULE + '\\n\\n' : ''}\n\nPROHIBITED NARRATIVE TERMINOLOGY (MANDATORY - applies to the prose you write): Never write any of these words or their variants anywhere in the note: calm, calmly, calming, relax, relaxation, relaxing, sensory, self-regulation, self-soothing, coping, mindfulness, meditation, yoga, deep breathing, breathing technique, problem solving, conflict resolution, social stories, social narratives, anger management, art therapy, frustration, frustrated, stress, anxiety, anxious, upset, overwhelmed, empathy, de-escalation, desensitization, response cost. Also never write internal-state or unsupported-progress language about the client or the caregiver: understanding, understood, comprehension, aware, awareness, realize, improved, improvement, better, enhanced, mastery, mastered, competent, competency, proficiency, progress, growth, gains, advancement, effective, effectiveness, successful, or comparative claims such as 'more independent', unless the exact supporting data was provided in the session data above. Describe only what was observed and done. TWO-LAYER RULE: this ban applies to the prose the system generates. If one of these words is part of the exact program or behavior NAME documented in the assessment or clinical context, that name may be reproduced verbatim as a closed-list citation, but the surrounding prose must never use the term and must never build a mentalist or emotional description around it.\n\n${ctx}CLIENT PSEUDONYM: ${clientObj.name}\n${_dateField}\n${durLine}${(String(ntId).indexOf('97155')===0||String(ntId).indexOf('97156')===0||ntId==='supervision'||ntId==='supervision-bcaba')?_shortSessionBlock(dur, ntId):''}\nPLACE OF SERVICE: ${place}`;
+  const base=`${_variantLine}${variationNote}${rotNote}${participantsNote}${prevPlanLine}${envLine}${medLine}${crisisLine}${freqNote}${emergingLine}${dataOnly156Flag}${_priorCtx}\n\nPRIVACY REMINDER: No diagnosis, no PII, no proper names.\n\nCRITICAL — DATA INTEGRITY: Never invent specific numerical data (percentages, exact counts, fidelity scores, IOA percentages, etc.) unless explicitly provided in the session frequency data or trial data above. ZERO-EPISODE RULE: Never write 'zero episodes,' 'no occurrences,' 'was not observed,' or 'did not occur' for any behavior. If a behavior had no documented occurrences in a session, it is simply not mentioned. There is no note content for a behavior that did not occur. If no numeric data was provided for a behavior or program, use qualitative observable descriptions only: "consistent prompt delivery was observed," "the client responded to gestural prompts," "the behavior occurred during demand contexts." Do not estimate, approximate, or fabricate any number, IN DIGITS OR IN WORDS: "four out of five", "eighty percent" and "on three occasions" are fabricated data exactly as 4/5, 80% and 3 are.\n\nABSOLUTE PROHIBITION — INVENTED BASELINES AND COMPARATIVE STATISTICS: NEVER write any of the following unless the exact number was explicitly provided in the session data above: weekly averages ("X incidents per week"), monthly averages, named-period baselines ("October average," "baseline of X"), improvement percentages ("representing a X% improvement"), rate comparisons ("higher than the baseline of X"), or any numerical claim presented as a trend, average, or historical comparison. These numbers do not exist in the session data — writing them is data fabrication and constitutes a Medicaid fraud risk. If no baseline or comparative data was provided, describe behavior in purely qualitative, session-specific observable terms only.\n\nPLAN FIDELITY WITH ERROR FILTERING (MANDATORY): Use the behaviors, interventions, replacement programs, teaching methods, prompts, and reinforcers from the clinical context below — BUT apply this filter: if the plan contains prohibited terms (calming, sensory, self-regulation, etc.), planned ignoring for aggression/SIB/elopement, DRL for dangerous behaviors, or any non-evidence-based procedure, silently exclude those items from the note. Do not replicate plan errors. Document only what is clinically defensible and audit-safe.\n\nFUNCTION-MATCHED REINFORCEMENT AND REPLACEMENT (MANDATORY): Every reinforcer and every consequence procedure must be delivered in the currency of the behavior's documented function. Attention-maintained behavior is reinforced with social attention; Non-Contingent Reinforcement (NCR) for an attention function delivers non-contingent ATTENTION on a time-based schedule, never tangibles or edibles. Escape-maintained behavior is reinforced with a break or removal of the demand. Tangible-maintained behavior is reinforced with access to the item. Automatic-maintained behavior is reinforced with a comparable, matched stimulation alternative. Never pair an attention or escape function with a tangible or edible reinforcer. ${_pairingClause}\n\n${FN_INTERVENTION_RULE}\n\n${KB_FRAME_RULE}\n\n${KB_DIFFERENTIAL_RULE}\n\n${NO_CROSS_SESSION_RULE}\n\n${OUTPUT_ONLY_NOTE_RULE}\n\n${SESSION_EVENT_SOURCING_RULE}\n\n${SCHOOL_DEMAND_SOURCE_RULE}\n\n${_placeCoherenceRule(place, partStr || '')}\n\n${_activitySettingRule(place)}\n\n${OPERATOR_TEXT_LANGUAGE_RULE}\n\n${(typeof _universalAnalystBlock === 'function') ? _universalAnalystBlock(clientObj && clientObj.id) : ''}${(typeof _recurringDefectsBlock === 'function') ? _recurringDefectsBlock(clientObj && clientObj.id) : ''}\n\n${(typeof _retiredPromptBlock === 'function') ? _retiredPromptBlock(clientObj && clientObj.id) : ''}\n\n${String(ntId).indexOf('97155')===0 ? CAREGIVER_ROLE_97155_RULE + '\\n\\n' + RBT_SEQUENCE_RULE + '\\n\\n' + RBT_ANTECEDENT_RULE + '\\n\\n' + KB_HIGH_P_RULE + '\\n\\n' + KB_PROMPT_HIERARCHY_RULE + '\\n\\n' : ''}\n\nPROHIBITED NARRATIVE TERMINOLOGY (MANDATORY - applies to the prose you write): Never write any of these words or their variants anywhere in the note: calm, calmly, calming, relax, relaxation, relaxing, sensory, self-regulation, self-soothing, coping, mindfulness, meditation, yoga, deep breathing, breathing technique, problem solving, conflict resolution, social stories, social narratives, anger management, art therapy, frustration, frustrated, stress, anxiety, anxious, upset, overwhelmed, empathy, de-escalation, desensitization, response cost. Also never write internal-state or unsupported-progress language about the client or the caregiver: understanding, understood, comprehension, aware, awareness, realize, improved, improvement, better, enhanced, mastery, mastered, competent, competency, proficiency, progress, growth, gains, advancement, effective, effectiveness, successful, or comparative claims such as 'more independent', unless the exact supporting data was provided in the session data above. Describe only what was observed and done. TWO-LAYER RULE: this ban applies to the prose the system generates. If one of these words is part of the exact program or behavior NAME documented in the assessment or clinical context, that name may be reproduced verbatim as a closed-list citation, but the surrounding prose must never use the term and must never build a mentalist or emotional description around it.\n\n${ctx}CLIENT PSEUDONYM: ${clientObj.name}\n${_dateField}\n${durLine}${(String(ntId).indexOf('97155')===0||String(ntId).indexOf('97156')===0||ntId==='supervision'||ntId==='supervision-bcaba')?_shortSessionBlock(dur, ntId):''}\nPLACE OF SERVICE: ${place}`;
 
   const tmplStr = sessTmpl ? sessionTemplateToPromptSection(sessTmpl) : '';
   // Use CASP checkbox sections if provided; fall back to session template
