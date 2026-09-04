@@ -4,12 +4,28 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ABA Clinical Notes Generator</title>
-<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- pdf.js, mammoth y jszip llevan defer: no se usan al arrancar (solo dentro de las
+     funciones que leen un archivo subido o exportan el DOCX), asi que no tienen por que
+     bloquear el pintado. Con defer se descargan en paralelo y se ejecutan antes de
+     DOMContentLoaded, o sea mucho antes de que nadie pulse "subir archivo". Las funciones
+     que las usan ya comprueban typeof X === 'undefined' y degradan solas, asi que una
+     descarga fallida se sigue tratando igual que antes.
+     supabase-js tambien lleva defer: _sb() construye el cliente la primera vez que se pide,
+     no al cargar, asi que ya nada del arranque depende de que esta libreria haya llegado. -->
+<script defer src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- La hoja de Google Fonts era lo que mas pesaba en el arranque, y no por su tamano:
+     un <link rel=stylesheet> BLOQUEA el pintado hasta que responde. En una red lenta, o
+     detras del cortafuegos de una clinica, la pagina no dibuja nada mientras tanto.
+     Cargada como media="print" el navegador no la considera bloqueante, y el onload la
+     devuelve a "all" en cuanto llega. Las fuentes entran igual, un instante despues, y
+     entre tanto se ve la tipografia del sistema que ya estaba de reserva en --sans/--mono. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"></noscript>
 <style>
 :root{
   --bg:#f4f6fb;--surface:#ffffff;--surface2:#edf0f7;--border:#dde3ee;--border2:#c5cfe0;
@@ -282,7 +298,7 @@ body{font-family:var(--sans);font-size:14px;background:var(--bg);color:var(--tex
      deployed, instead of guessing whether the upload replaced the old index.html. -->
 <div id="buildStamp" title="Versión desplegada"
      style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
-  build 2026-08-23q · el objeto preferido que cabe en este lugar y en este momento</div>
+  build 2026-08-23r · la pagina pinta sin esperar a la red</div>
 <div class="app">
 
   <!-- HEADER -->
@@ -2177,7 +2193,22 @@ function _lzShouldCompress(k){ return _LZ_PREFIXES.some(p => k.indexOf(p) === 0)
 const SUPABASE_URL      = 'https://buweshqbeqohiuvgonip.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_yA48bWv51wwa45Kfls4sZg_dTYZwZry'; // anon key is public; RLS protects the data
 
-const _sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+/* El cliente se construye la PRIMERA VEZ que alguien lo pide, no al cargar la pagina.
+   Antes era `const _sb = window.supabase.createClient(...)` en el nivel superior, y esa
+   sola linea obligaba a que la etiqueta de supabase-js fuera bloqueante: el navegador
+   tenia que descargar y ejecutar toda la libreria antes de pintar nada. Medido, costaba
+   unos 280 ms del primer pintado. Aplazado, la etiqueta puede llevar defer y el pintado
+   deja de esperarla; para cuando algo necesita la base de datos —que siempre ocurre
+   dentro de una funcion, nunca al arrancar— la libreria ya esta.
+   Devuelve null si aun no estuviera: los sitios que lo usan ya viven en try/catch y
+   degradan a localStorage, que es exactamente lo que conviene que pase. */
+var _sbInstance = null;
+function _sb(){
+  if(_sbInstance) return _sbInstance;
+  if(!window.supabase || !window.supabase.createClient) return null;
+  _sbInstance = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  return _sbInstance;
+}
 let CURRENT_USER  = null;   // Supabase auth user
 let CURRENT_OWNER = null;   // CURRENT_USER.id
 
@@ -2295,7 +2326,7 @@ async function _pushWrite(k, v){
   const sub = _clientSub(k);
   if (sub){
     const patch = {}; patch[sub.col] = v;
-    const { error } = await _sb.from('clients').update(patch).eq('id', sub.id);
+    const { error } = await _sb().from('clients').update(patch).eq('id', sub.id);
     if (error) _syncError(`update ${sub.col} (${sub.id}): ` + error.message);
   }
 }
@@ -2306,7 +2337,7 @@ async function _pushDelete(k){
   if (sub){
     const empty = sub.col === 'notes' ? [] : (sub.col === 'summary' ? '' : {});
     const patch = {}; patch[sub.col] = empty;
-    await _sb.from('clients').update(patch).eq('id', sub.id);
+    await _sb().from('clients').update(patch).eq('id', sub.id);
   }
 }
 
@@ -2354,25 +2385,25 @@ async function _writeTherapists(arr){
   const newIds = new Set(rows.map(r => r.id));
   const toDelete = [..._knownTherapistIds].filter(id => !newIds.has(id));
   if (rows.length){
-    let { error } = await _sb.from('staff').upsert(rows, { onConflict: 'id' });
+    let { error } = await _sb().from('staff').upsert(rows, { onConflict: 'id' });
     if (error && _staffHasCaseGuide && _staffMissingCaseGuide(error.message)) {
       _staffHasCaseGuide = false;                      // degradar: no perder el resto
       rows.forEach(r => { delete r.case_guide; });
       _caseGuideSqlNotice();
-      ({ error } = await _sb.from('staff').upsert(rows, { onConflict: 'id' }));
+      ({ error } = await _sb().from('staff').upsert(rows, { onConflict: 'id' }));
     }
     if (error) {
       // Bulk failed (one bad row poisons the whole statement) — retry row by row
       const failed = [];
       for (const r of rows){
-        const { error: e2 } = await _sb.from('staff').upsert(r, { onConflict: 'id' });
+        const { error: e2 } = await _sb().from('staff').upsert(r, { onConflict: 'id' });
         if (e2) failed.push(r.name + ' (' + e2.message + ')');
       }
       if (failed.length) _syncError('terapeutas no guardados: ' + failed.join('; '));
     }
   }
   for (const id of toDelete){
-    const { error } = await _sb.from('staff').delete().eq('id', id);
+    const { error } = await _sb().from('staff').delete().eq('id', id);
     if (error) _syncError('no se pudo eliminar terapeuta ' + id + ': ' + error.message);
   }
   _knownTherapistIds = newIds;
@@ -2393,12 +2424,12 @@ async function _writeClients(arr){
   // (this is what hid Sara's imported clients: her batch included Rolando's rows).
   const myRows = rows.filter(r => r.owner_id === CURRENT_OWNER);
   if (myRows.length){
-    const { error } = await _sb.from('clients').upsert(myRows, { onConflict: 'id' });
+    const { error } = await _sb().from('clients').upsert(myRows, { onConflict: 'id' });
     if (error) {
       // Bulk failed (one bad row poisons the whole statement) — retry row by row
       const failed = [];
       for (const r of myRows){
-        const { error: e2 } = await _sb.from('clients').upsert(r, { onConflict: 'id' });
+        const { error: e2 } = await _sb().from('clients').upsert(r, { onConflict: 'id' });
         if (e2) failed.push(r.name + ' (' + e2.message + ')');
       }
       if (failed.length) _syncError('clientes no guardados: ' + failed.join('; '));
@@ -2422,7 +2453,7 @@ async function _writeClients(arr){
   const mine    = removed.filter(id => foreign.indexOf(id) === -1);
   const stillThere = [];
   for (const id of mine){
-    const { error } = await _sb.from('clients').delete().eq('id', id);
+    const { error } = await _sb().from('clients').delete().eq('id', id);
     if (error){ stillThere.push(id); _syncError('no se pudo eliminar cliente ' + id + ': ' + error.message); }
   }
   if (foreign.length){
@@ -2532,7 +2563,7 @@ function _mirrorBanner(show, extra){
 async function _mirrorTryReconnect(){
   if(!_MIRROR_MODE) return;
   try{
-    const { error } = await _sb.from('clients').select('id').limit(1);
+    const { error } = await _sb().from('clients').select('id').limit(1);
     if(error) throw error;
   }catch(e){ return; }  // still down
   // Cloud is back: replay the queue in order.
@@ -2559,8 +2590,8 @@ window.addEventListener('online', () => _mirrorTryReconnect());
 
 async function hydrate(){
   const [{ data: staff, error: e1 }, { data: cli, error: e2 }] = await Promise.all([
-    _sb.from('staff').select('*'),
-    _sb.from('clients').select('*'),
+    _sb().from('staff').select('*'),
+    _sb().from('clients').select('*'),
   ]);
   if (e1) throw e1;
   if (e2) throw e2;
@@ -2635,20 +2666,36 @@ async function _afterLogin(session){
   _showUserBar(CURRENT_USER && CURRENT_USER.email);
 }
 
+/* Si supabase-js no llego —red de la clinica que bloquea el CDN, por ejemplo— antes esto
+   reventaba con un error mudo en la consola y la pantalla se quedaba en blanco, sin decir
+   por que. Ahora se dice: es lo unico que el usuario puede accionar, porque el arreglo no
+   esta en la app sino en la red. */
+function _sbUnavailableNotice(){
+  var o = document.createElement('div');
+  o.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.92);padding:24px;font-family:system-ui,sans-serif';
+  o.innerHTML = '<div style="max-width:460px;background:#fff;border-radius:10px;padding:22px 26px;line-height:1.6;color:#1e293b">'
+    + '<div style="font-weight:700;margin-bottom:8px">No se pudo cargar la librería de datos</div>'
+    + '<div style="font-size:13px">El navegador no alcanzó <code>cdn.jsdelivr.net</code>, así que la aplicación no puede iniciar sesión ni sincronizar. '
+    + 'Suele ser la red o un cortafuegos que bloquea ese dominio. Comprueba la conexión y recarga la página.</div></div>';
+  document.body.appendChild(o);
+}
+
 async function _boot(){
-  const { data: { session } } = await _sb.auth.getSession();
+  if(!_sb()){ _sbUnavailableNotice(); return; }
+  const { data: { session } } = await _sb().auth.getSession();
   if (session) await _afterLogin(session);
   else _showLogin();
 }
 
 async function abaLogin(email, pwd, msgEl){
-  const { data, error } = await _sb.auth.signInWithPassword({ email: email.trim(), password: pwd });
+  if(!_sb()){ if (msgEl) msgEl.textContent = 'La librería de datos no cargó; revisa la conexión y recarga.'; return; }
+  const { data, error } = await _sb().auth.signInWithPassword({ email: email.trim(), password: pwd });
   if (error){ if (msgEl) msgEl.textContent = error.message; return; }
   await _afterLogin(data.session);
 }
 
 async function abaLogout(){
-  await _sb.auth.signOut();
+  await _sb().auth.signOut();
   location.reload();
 }
 window.abaLogout = abaLogout;
@@ -5109,7 +5156,7 @@ function assessSave(){
   }
   LS.set('aba5_assess_'+clientId, core);
   LS.set('aba5_assessx_'+clientId, excl);
-  try{ if(typeof _sb!=='undefined') _sb.from('clients').update({assessment_updated_at: new Date().toISOString()}).eq('id', clientId); }catch(e){}
+  try{ if(typeof _sb!=='undefined') _sb().from('clients').update({assessment_updated_at: new Date().toISOString()}).eq('id', clientId); }catch(e){}
   _assessUpdateBadge(core);
   // Un reassessment nuevo cambia lo que esta en curso. Contrastarlo con la ficha
   // AQUI es lo que evita que un programa ya masterizado siga entrando en las notas.
@@ -15576,7 +15623,7 @@ async function callGeminiAPI(prompt, maxTokens = 2500, jsonMode = false, thinkin
     }
     const _model = _modelIdx >= 0 ? MODEL_FALLBACKS[_modelIdx] : MODEL_PRIMARY;
 
-    const _sess = (await _sb.auth.getSession()).data.session;
+    const _sess = (await _sb().auth.getSession()).data.session;
     if (!_sess) {
       _clearRetryStatus();
       throw new Error('Sesi\u00f3n expirada. Cierra sesi\u00f3n y vuelve a entrar para seguir generando.');
