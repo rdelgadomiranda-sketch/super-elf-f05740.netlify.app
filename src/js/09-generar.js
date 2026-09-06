@@ -1153,30 +1153,25 @@ async function callGeminiAPI(prompt, maxTokens = 2500, jsonMode = false, thinkin
     ? 'Los servidores de Gemini están saturados en este momento (error 503). No es un problema de la aplicación. Espera uno o dos minutos e intenta de nuevo. Si es urgente, puedes intentar en horario de menor demanda.'
     : (lastError && lastError.status === 429)
       ? (function(){
-          /* Las dos causas del 429 son distintas y solo una se arregla esperando: ir
-             demasiado rápido se pasa solo, el crédito agotado no.
-             Y hay algo que este mensaje daba por sentado y ya no es cierto: que la
-             clave fuera del terapista. Desde que la llamada va por la Edge Function
-             la clave es UNA, del servidor, y la comparten todos — así que el límite
-             se alcanza con el consumo del EQUIPO, no con el de quien está delante de
-             la pantalla, y quien puede resolverlo es quien administra la cuenta. */
-          var msg = 'Se alcanzó el límite de la API de Gemini (error 429) tras varios reintentos.'
-            + ' La clave es la del servidor y la comparte todo el equipo, así que el límite se alcanza'
-            + ' con el consumo de todos, no solo con el tuyo.';
+          // Distinguir las dos causas del 429: ir demasiado rápido (se pasa solo) o
+          // haber agotado el crédito (no se pasa esperando). El gasto estimado es lo
+          // único que permite orientar al usuario hacia la causa correcta.
+          var msg = 'Se alcanzó el límite de la API de Gemini (error 429) tras varios reintentos.';
           try{
             var c = _gemCfg(), left = (c.credit === null) ? null : (c.credit - _gemSpent());
             if(c.pays === false){
-              return msg + ' Avisa a ' + (c.payer ? c.payer : 'quien administra la cuenta de Google del proyecto')
-                + ': hay que revisar la cuota o el crédito en Google AI Studio. Esperar no lo resolverá si el crédito se agotó.';
+              return msg + ' Tú no cargas crédito en esta clave: avisa a '
+                + (c.payer ? c.payer : 'quien la paga')
+                + ' para que recargue en Google AI Studio. Esperar no lo resolverá si el crédito se agotó.';
             }
             if(left !== null && left <= c.alertAt){
-              msg += ' Tu contador estima que quedan $' + (Math.round(left*100)/100).toFixed(2)
-                + ' de lo que declaraste, así que es muy probable que se haya agotado. Recarga en Google AI Studio — esperar no lo resolverá.';
+              msg += ' El contador estima que te queda ' + '$' + (Math.round(left*100)/100).toFixed(2)
+                + ' de crédito: es muy probable que se haya agotado. Recarga en Google AI Studio — esperar no lo resolverá.';
             } else {
-              msg += ' Si la cuenta es de pago y tiene crédito, espera un minuto: suele ser velocidad, no cuota.'
-                + ' Si se repite, revisa la cuota y el crédito en Google AI Studio.';
+              msg += ' Si tu clave es de pago y tiene crédito, espera un minuto: suele ser velocidad, no cuota.'
+                + ' Si se repite, revisa el crédito en Google AI Studio.';
             }
-          }catch(e){ msg += ' Revisa la cuota y el crédito en Google AI Studio.'; }
+          }catch(e){ msg += ' Revisa tu cuota y tu crédito en Google AI Studio.'; }
           return msg;
         })()
       : ('No se pudo conectar con Gemini tras varios intentos. ' + (lastError ? lastError.message : ''));
@@ -1227,12 +1222,6 @@ function _gemRenderBanner(){
       + '<div style="color:var(--text3)">Gastado ' + money(spent) + ' en ' + u.calls + ' llamada(s) \u00b7 '
       + (u.inTok).toLocaleString('es') + ' tokens de entrada, ' + (u.outTok).toLocaleString('es') + ' de salida'
       + (c.since ? ' \u00b7 desde ' + c.since : '') + '.</div>'
-      /* La clave es una sola y del servidor: este contador solo ve lo que gasta ESTE
-         usuario, pero el saldo de la cuenta baja con el de todos. Sin decirlo, el
-         saldo de arriba se lee como si fuera el de la cuenta, y siempre va a parecer
-         que queda mas de lo que hay. */
-      + '<div style="color:var(--text3)">Ojo: la clave es la del servidor y la usa todo el equipo. Esta cifra solo cuenta TU consumo, '
-      + 'as\u00ed que el saldo real de la cuenta es m\u00e1s bajo que el de arriba.</div>'
       + (low ? '<div style="color:' + col + '">Recarga en Google AI Studio antes de seguir generando: cuando se agota, la API responde 429 y las notas dejan de salir.</div>' : '');
   }
   if(u.q429){
