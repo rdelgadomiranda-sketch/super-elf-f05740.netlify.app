@@ -1,0 +1,1714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABA Clinical Notes Generator</title>
+<!-- pdf.js, mammoth y jszip llevan defer: no se usan al arrancar (solo dentro de las
+     funciones que leen un archivo subido o exportan el DOCX), asi que no tienen por que
+     bloquear el pintado. Con defer se descargan en paralelo y se ejecutan antes de
+     DOMContentLoaded, o sea mucho antes de que nadie pulse "subir archivo". Las funciones
+     que las usan ya comprueban typeof X === 'undefined' y degradan solas, asi que una
+     descarga fallida se sigue tratando igual que antes.
+     supabase-js tambien lleva defer: _sb() construye el cliente la primera vez que se pide,
+     no al cargar, asi que ya nada del arranque depende de que esta libreria haya llegado. -->
+<script defer src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- La hoja de Google Fonts era lo que mas pesaba en el arranque, y no por su tamano:
+     un <link rel=stylesheet> BLOQUEA el pintado hasta que responde. En una red lenta, o
+     detras del cortafuegos de una clinica, la pagina no dibuja nada mientras tanto.
+     Cargada como media="print" el navegador no la considera bloqueante, y el onload la
+     devuelve a "all" en cuanto llega. Las fuentes entran igual, un instante despues, y
+     entre tanto se ve la tipografia del sistema que ya estaba de reserva en --sans/--mono. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"></noscript>
+<style>
+/*@CSS@*/
+
+</style>
+</head>
+<body>
+<!-- Visible build stamp: lets anyone confirm at a glance which version is actually
+     deployed, instead of guessing whether the upload replaced the old index.html. -->
+<div id="buildStamp" title="Versión desplegada"
+     style="position:fixed;right:8px;bottom:8px;z-index:99999;background:#111827;color:#a7f3d0;font:600 10px/1.4 ui-monospace,monospace;padding:3px 8px;border-radius:5px;opacity:.75;pointer-events:none">
+  build 2026-08-23u · revertido: cada terapista tiene su propia clave de Gemini</div>
+<div class="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <h1>ABA CLINICAL NOTES GENERATOR</h1>
+    <div class="sub">Florida Medicaid · Multi-client · BCBA · RBT · Medicaid Compliant</div>
+    <div class="badge-row">
+      <span class="badge on">97155</span>
+      <span class="badge on">97153</span>
+      <span class="badge on">97156</span>
+      <span class="badge sup">Supervision</span>
+      <span class="badge">BACB RBT Task List 2nd ed.</span>
+    </div>
+  </div>
+
+  <!-- API KEY BANNER -->
+  <div class="api-banner" id="apiBanner"></div>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab" id="tab-btn-analyst" onclick="switchTab('analyst')">[ THERAPIST ]</button>
+    <button class="tab active" id="tab-btn-clients" onclick="switchTab('clients')">[ CLIENTS ]</button>
+    <button class="tab" id="tab-btn-gen" onclick="switchTab('gen')">[ GENERATE ]</button>
+    <button class="tab" id="tab-btn-analystgen" onclick="switchTab('analystgen')">[ ANALYST ]</button>
+    <button class="tab" id="tab-btn-sup" onclick="switchTab('sup')">[ SUP LOG ]</button>
+    <button class="tab" id="tab-btn-monthly" onclick="switchTab('monthly')">[ MONTHLY ]</button>
+    <button class="tab" id="tab-btn-abamatrix" onclick="switchTab('abamatrix')">[ ABAMATRIX ]</button>
+    <button class="tab" id="tab-btn-review" onclick="switchTab('review')">[ REVISAR NOTA ]</button>
+  </div>
+
+  <!-- ══════════ THERAPIST TAB ══════════ -->
+  <div id="tab-analyst" style="display:none">
+
+    <div class="card">
+      <div class="card-title">Registered Therapists</div>
+      <div style="font-size:11px;color:var(--text3);line-height:1.6;margin:-4px 0 10px">
+        Para <b>borrar un terapista</b>: boton <b style="color:var(--red)">Borrar terapista</b> a la derecha de su fila.
+        Solo se habilita cuando ya no tiene clientes asignados — borra primero cada cliente, uno a uno,
+        desde la pestana <b>[ CLIENTS ]</b>, para no perder datos clinicos sin verlos.
+      </div>
+      <div class="client-list" id="therapistList">
+        <div class="empty-state">[ no therapists yet — add one below ]</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" id="therapistFormTitle">Add Therapist</div>
+      <div class="row2" style="margin-bottom:10px">
+        <div class="field">
+          <label>Name</label>
+          <input type="text" id="aName" placeholder="e.g. Ana Soto">
+        </div>
+        <div class="field">
+          <label>Credential</label>
+          <select id="aCred">
+            <option value="BCBA">BCBA</option>
+            <option value="BCaBA">BCaBA</option>
+            <option value="BCBA-D">BCBA-D</option>
+            <option value="RBT">RBT</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2)">
+          <input type="checkbox" id="aIncludeDuration" checked style="accent-color:var(--blue);width:14px;height:14px">
+          Include session duration in the body of the note
+        </label>
+        <p style="font-size:11px;color:var(--text3);margin:3px 0 0 22px">Uncheck for analysts whose style omits duration from the note narrative.</p>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text2)">
+          <input type="checkbox" id="aDataOnly156" style="accent-color:var(--blue);width:14px;height:14px">
+          Collects caregiver performance data in parent training sessions only (97156)
+        </label>
+        <p style="font-size:11px;color:var(--text3);margin:3px 0 0 22px">When checked, client behavioral data collection language is omitted from 97155 and supervision notes. Data collection in 97156 refers to caregiver performance data only.</p>
+      </div>
+      <div id="rbtNotice" style="display:none;padding:8px 12px;background:var(--blue3);border:1px solid var(--border2);border-radius:6px;font-size:12px;color:var(--text2);margin-bottom:8px">
+        RBT mode: generates CPT-97153 notes.
+      </div>
+
+      <!-- STICKY NOTE DEL TERAPISTA — setup de participantes. Vive con el terapista:
+           se ve al abrir su ficha y tambien en GENERATE al elegirlo. -->
+      <div id="thGuideBox" style="display:none;margin-bottom:10px;padding:10px 13px;border:1px solid var(--amber,#b86c00);border-left:4px solid var(--amber,#b86c00);border-radius:6px;background:var(--surface)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:5px">
+          <div style="font-size:11px;font-weight:700;color:var(--text2)">📌 Setup de participantes — <span id="thGuideWho" style="font-weight:500;color:var(--text3)"></span></div>
+          <span id="thGuideMsg" style="font-size:10px;color:var(--text3)"></span>
+        </div>
+        <textarea id="thGuideText" rows="8" oninput="_saveThGuide()" placeholder="Lo que este terapista indica sobre el setup de participantes de sus notas. Un caso por linea. Ej.: Cliente X — solo con la BCaBA · Cliente Y — BCaBA y RBT · Cliente Z — 2h supervision + 1h parent training."
+          style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7;resize:vertical;outline:none"></textarea>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.5">
+          Nota fija de este terapista: no cambia de dia en dia. Se guarda sola en la nube — la ves desde cualquier dispositivo — es editable, aparece tambien en <b>[ GENERATE ]</b> al elegirlo y no entra en ninguna nota.
+        </div>
+      </div>
+      <div class="btn-row" style="margin-top:0">
+        <button class="btn btn-primary" style="flex:1;justify-content:center" onclick="saveTherapist()">Save Therapist</button>
+        <button class="btn btn-outline" id="clearTherapistBtn" onclick="clearTherapistForm()" style="display:none">+ New</button>
+      </div>
+      <div class="msg" id="therapistMsg"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Backup &amp; Restore</div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:.875rem;line-height:1.6">Export all therapists, clients, summaries, and history into a single file. Import on any device to restore instantly.</p>
+      <div class="btn-row" style="margin-top:0">
+        <button class="btn btn-secondary" style="flex:1" onclick="exportBackup()">↓ Export backup</button>
+        <label class="btn btn-outline" style="flex:1;justify-content:center;cursor:pointer;position:relative">
+          ↑ Import backup
+          <input type="file" accept=".json" style="position:absolute;inset:0;opacity:0;cursor:pointer" onchange="importBackup(this)">
+        </label>
+      </div>
+      <div class="msg" id="backupMsg"></div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border2)">
+        <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Automatic safety snapshots</div>
+        <p style="font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:8px">The app automatically saves a snapshot of all your data every 5 minutes and before any risky operation. Up to 3 recent snapshots are kept.</p>
+        <div class="btn-row" style="margin-top:0">
+          <button class="btn btn-outline" style="flex:1;font-size:11px" onclick="_showSnapshotsList()">⟲ View / restore snapshots</button>
+          <button class="btn btn-outline" style="flex:1;font-size:11px" onclick="_openStorageManager()">⚙ Storage manager</button>
+        </div>
+        <div class="msg" id="snapshotMsg"></div>
+      </div>
+    </div>
+
+    <!-- ── GOOGLE DRIVE SYNC ──────────────────────────────────────────── -->
+    <div class="card" style="border:1.5px solid rgba(66,133,244,.35);background:linear-gradient(135deg,rgba(66,133,244,.04),rgba(52,168,83,.02))">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4.5 19.5l3-5.2H21l-3 5.2H4.5z" fill="#34A853"/><path d="M3 7.5L6 2.1l5.25 9.1-3 5.2L3 7.5z" fill="#4285F4"/><path d="M11.25 11.2L16.5 2.1H21l-5.25 9.1h-4.5z" fill="#FBBC05"/></svg>
+        <div class="card-title" style="margin:0;color:#1a73e8">Google Drive Sync</div>
+        <div id="driveStatusBadge" style="display:none;font-size:10px;padding:2px 8px;border-radius:10px;font-family:var(--mono)"></div>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:0 0 12px;line-height:1.6">
+        Sync all client data across devices using your Google Drive. Data is saved in a private file 
+        visible only to this app (<code style="font-size:10px">drive.file</code> scope — the app cannot read any other files in your Drive).
+        <span style="color:#f59e0b;font-weight:600"> Requires the app to be served from an HTTP URL (not opened as a local file). </span>
+        <a id="driveSetupLink" href="#" onclick="showDriveSetup();return false" style="color:#1a73e8;text-decoration:none;font-weight:600">Setup guide ›</a>
+      </p>
+
+      <div id="driveClientIdRow" style="margin-bottom:10px">
+        <label style="font-size:11px;color:var(--text3);font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">GOOGLE OAUTH CLIENT ID</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="driveClientId" placeholder="000000000000-xxxxxxxx.apps.googleusercontent.com"
+            style="flex:1;padding:7px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;font-family:var(--mono);background:var(--surface);color:var(--text);outline:none">
+          <button class="btn btn-secondary" onclick="saveDriveClientId()" style="padding:7px 14px;font-size:12px">Save</button>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px">This is your app's Client ID from Google Cloud Console — not a secret, safe to store here.</div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button id="driveConnectBtn" class="btn btn-secondary" onclick="driveConnect()" style="font-size:12px;display:flex;align-items:center;gap:6px">
+          <svg width="14" height="14" viewBox="0 0 24 24"><path d="M4.5 19.5l3-5.2H21l-3 5.2H4.5z" fill="#34A853"/><path d="M3 7.5L6 2.1l5.25 9.1-3 5.2L3 7.5z" fill="#4285F4"/><path d="M11.25 11.2L16.5 2.1H21l-5.25 9.1h-4.5z" fill="#FBBC05"/></svg>
+          Connect Google Drive
+        </button>
+        <button id="driveSyncBtn" class="btn btn-outline" onclick="driveSync()" style="font-size:12px;display:none">↕ Sync now</button>
+        <button id="driveDisconnectBtn" class="btn btn-outline" onclick="driveDisconnect()" style="font-size:12px;display:none;color:var(--text3)">Disconnect</button>
+      </div>
+      <div class="msg" id="driveMsg" style="margin-top:8px"></div>
+      <div id="driveSyncInfo" style="display:none;margin-top:8px;font-size:11px;color:var(--text3);font-family:var(--mono)"></div>
+    </div>
+
+  </div><!-- end therapist tab -->
+
+  <!-- ══════════ CLIENTS TAB ══════════ -->
+  <div id="tab-clients">
+
+    <!-- Therapist filter -->
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:.875rem">
+      <span style="font-size:10px;font-family:var(--mono);color:var(--text3);white-space:nowrap;letter-spacing:.06em">THERAPIST:</span>
+      <select id="clientTherapistSel" onchange="onClientTherapistChange()" style="flex:1;padding:6px 9px;border:1px solid var(--border2);border-radius:4px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        <option value="">— select therapist —</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Clients <span id="clientListTherapistLabel" style="text-transform:none;letter-spacing:0;font-size:10px;font-weight:400"></span></div>
+      <div class="client-list" id="clientList">
+        <div class="empty-state">[ select a therapist to see their clients ]</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" id="editCardTitle">Add Client</div>
+      <div class="row2" style="margin-bottom:10px">
+        <div class="field">
+          <label>Client Name or Pseudonym</label>
+          <input type="text" id="cName" placeholder="First name or code">
+        </div>
+        <div class="field">
+          <label>Assign to Therapist <span style="color:var(--err,#c0392b)">*</span></label>
+          <select id="cTherapistSel" style="width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:5px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+            <option value="">— select —</option>
+          </select>
+        </div>
+      </div>
+
+      <details id="assessPanel" open style="margin-top:0;margin-bottom:1rem;border:1px solid var(--border2);border-radius:6px;padding:10px 14px;background:var(--surface)">
+        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2)">Reduced Assessment (clinical source of truth) <span id="assessBadge" style="margin-left:6px"></span></summary>
+        <div style="font-size:11px;color:var(--text3);margin:8px 0 6px;line-height:1.5">Upload or paste the client's FULL assessment. The AI proposes a reduced, de-identified version by <b>elimination only</b> (removes admin text and all PII; keeps clinical content verbatim with literal ABLLS references). Review it, then save. The client name is never stored here — it is injected at generation time.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <label class="btn btn-outline" style="padding:6px 12px;font-size:11px;cursor:pointer">Upload assessment<input type="file" id="assessFile" accept=".pdf,.docx,.txt" style="display:none" onchange="_assessOnFile(this)"></label>
+          <span id="assessFileName" style="font-size:10px;color:var(--blue);font-family:var(--mono)"></span>
+          <button class="btn btn-primary" id="assessProposeBtn" onclick="_lockDuring('assessPropose','la reducción del assessment','assess')" style="padding:6px 14px;font-size:11px">Propose reduction (AI)</button>
+          <span id="assessProg" style="font-size:11px;color:var(--text3)"></span>
+        </div>
+        <textarea id="assessFull" rows="4" placeholder="Paste the FULL assessment here (or upload above), then click Propose reduction…" style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text);margin-bottom:8px"></textarea>
+        <div class="field" style="margin-bottom:8px">
+          <label style="font-size:11px">Fecha del assessment / reassessment (para el aviso de revisión a los 6 meses)</label>
+          <input type="date" id="assessDate" onchange="_assessSaveDate()" style="font-size:11px">
+          <span id="assessExpiry" style="font-size:11px;margin-left:8px"></span>
+        </div>
+        <label style="font-size:11px;font-weight:600;color:var(--text2)">Reduced assessment (editable — the source of truth used to generate notes)</label>
+        <textarea id="assessCore" rows="8" placeholder="The AI proposal appears here for your review. Edit if needed, then Save." style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text);margin:4px 0 8px"></textarea>
+        <label style="font-size:11px;font-weight:600;color:var(--text2)">Exclusions — parts with a conceptual error that must NEVER be used (one per line)</label>
+        <textarea id="assessExcl" rows="3" placeholder="e.g. Replacement for aggression listed as a non-equivalent behavior — do not use.&#10;Sensory-break goal — conceptually invalid, ignore." style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text);margin:4px 0 8px"></textarea>
+        <div class="btn-row"><button class="btn btn-primary" onclick="assessSave()" style="padding:6px 16px;font-size:12px">Save reduced assessment</button><button class="btn btn-outline" id="assessPoolsBtn" onclick="_lockDuring('assessFillPools','el relleno de behaviors y replacements','assess')" style="padding:6px 14px;font-size:12px">Rellenar behaviors / replacements / reinforcers</button></div>
+        <div class="msg" id="assessMsg"></div>
+        <div id="assessPending" style="display:none;margin-top:8px;padding:8px 11px;border:1px solid #b45309;border-left:4px solid #b45309;border-radius:5px;background:#fffbeb;font-size:11px;color:#7c2d12;line-height:1.55"></div>
+
+        <!-- CALIDAD DEL REDUCIDO: los tres campos que consumen las notas -->
+        <div id="assessQuality" style="display:none;margin-top:10px;padding:10px 13px;border:1px solid var(--border2);border-left:4px solid var(--blue);border-radius:6px;background:var(--surface)"></div>
+        <div style="margin-top:8px;padding:9px 12px;border:1px dashed var(--border2);border-radius:6px;font-size:11px;color:var(--text3);line-height:1.6">
+          <b style="color:var(--text2)">Qué debe traer un reducido completo</b> — topografía por conducta, intervenciones por conducta y actividades por replacement.
+          Es <b>obligatorio para los clientes de AbaMatrix</b>, porque la plataforma pide esos campos uno a uno.
+          Para el resto <b>no hace falta</b>: la nota sale igual sin ellos. Pero con ellos sale mucho mejor en cualquier cliente —
+          deja de describir la enseñanza en abstracto y dice qué conducta, con qué procedimiento y en qué actividad.
+          Si un cliente no los tiene, no es un error: es un reducido más corto.
+        </div>
+      </details>
+
+      <!-- PLAN SUMMARY — always visible in client edit area -->
+      <div class="field" style="margin-bottom:10px">
+        <label>Plan Summary <span style="font-weight:400;color:var(--text3);font-size:10px">(summary antiguo — solo se usa si el cliente NO tiene assessment reducido)</span> <span id="cPlanSummaryStatus" style="float:right;font-size:10px;color:var(--text3);font-weight:400"></span></label>
+        <textarea id="cPlanSummary" rows="7" oninput="_autoSavePlanSummary()" placeholder="Paste the clinical summary here — or upload the completed ABA Clinical Profile Form below to auto-generate it.&#10;&#10;Include: maladaptive behaviors with operational definitions, replacement behaviors, reinforcers, prompt hierarchy, teaching methods, current protocol modification topics."></textarea>
+      </div>
+
+      <!-- ANALYST CORRECTIONS — memoria por cliente de lo que el analista mandó corregir -->
+      <div class="field" style="margin-bottom:10px">
+        <label>Correcciones del analista <span style="font-weight:400;color:var(--text3);font-size:10px">(memoria de este cliente — se aplica a TODAS sus notas)</span></label>
+        <div style="display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap">
+          <input type="text" id="acRbt" placeholder="RBT (opcional)" style="width:130px;font-size:11px;padding:6px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)">
+          <input type="date" id="acDate" style="font-size:11px;padding:6px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)">
+          <textarea id="acText" rows="2" style="flex:1;min-width:240px;box-sizing:border-box;font-family:inherit;font-size:11px" placeholder="Una corrección por línea, tal como la mandó el analista. P. ej.: Quitar Planned Ignoring de tantrums por función tangible (hay que enseñar a pedirlo)."></textarea>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:11px" onclick="_addAnalystNote()">Añadir</button>
+        </div>
+        <div id="redFlagBox" style="display:none;margin-top:10px;padding:9px 11px;border:2px solid var(--red,#c0392b);border-radius:6px;background:var(--surface)"></div>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-outline" style="padding:4px 11px;font-size:10px" onclick="_lockDuring('_reviewAnalystNotes','la revisión de sugerencias del analista','active')">Revisar sugerencias nuevas</button>
+          <span style="font-size:10px;color:var(--text3)">Clasifica cada sugerencia nueva y avisa si choca con la práctica clínica. Las ya revisadas no se vuelven a evaluar.</span>
+        </div>
+        <div id="acList" style="margin-top:8px;font-size:11px"></div>
+      </div>
+
+      <!-- UPLOAD ROW — compact, inside the edit card -->
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <div class="drop-zone" id="sumDrop" style="flex:1;padding:.5rem .75rem;text-align:left;display:flex;align-items:center;gap:8px">
+          <input type="file" accept=".pdf,.docx,.txt" id="sumFile" onchange="handleSumFile(this.files[0]); this.value=''">
+          <span style="font-size:20px;flex-shrink:0">📄</span>
+          <div>
+            <div style="font-size:12px;color:var(--text2)">Upload assessment, OfficePuzzle sheet, or ABA Clinical Profile (PDF / DOCX / TXT). You can add more than one — they combine.</div>
+            <div class="fn" id="sumFilename" style="font-size:11px"></div>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="sumGenBtn" onclick="_lockDuring('generateSummary','la generación del summary','active')" style="white-space:nowrap;flex-shrink:0">
+          <span class="spinner spinner-dark" id="sumSpinner" style="display:none"></span>Auto-generate
+        </button>
+        <button class="btn btn-outline" onclick="clearPendingDocs()" style="white-space:nowrap;flex-shrink:0" title="Clear loaded documents">✕ Clear docs</button>
+        <button class="btn btn-success" onclick="downloadSummary()" style="white-space:nowrap;flex-shrink:0" title="Download summary as .txt">↓ .txt</button>
+        <button class="btn btn-primary" onclick="downloadBlankForm()" style="white-space:nowrap;flex-shrink:0" title="Download blank ABA Clinical Profile Form">↓ Blank form</button>
+      </div>
+      <div class="processing" id="sumProcessing"></div>
+
+      <div class="btn-row" style="margin-top:.875rem">
+        <button class="btn btn-primary" onclick="saveClient()" style="flex:1;justify-content:center">Save Client</button>
+        <button class="btn btn-outline" onclick="triggerImportClient()" style="justify-content:center" title="Import a client exported from another session">↓ Import Client</button>
+        <input type="file" id="importClientFile" accept=".json" style="display:none" onchange="importSingleClient(event)">
+        <button class="btn btn-outline" id="clearClientBtn" onclick="clearCurrentClient()" style="display:none">+ New client</button>
+        <button class="btn btn-outline" onclick="assessOverview()" style="font-size:11px;padding:5px 10px">Estado de los assessments</button>
+      </div>
+      <div id="assessOverviewOut" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid var(--border2);border-radius:6px;background:var(--surface)"></div>
+      <div class="msg" id="addMsg"></div>
+      <div class="msg" id="sumMsg"></div>
+    </div>
+
+    <!-- BEHAVIORS PANEL (shown when client selected) -->
+    <div class="card" id="summaryCard" style="display:none">
+
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:1rem">
+        <div class="card-title" style="margin-bottom:0">Behaviors &amp; Targets · </div>
+        <span id="sumClientName" style="font-size:11px;font-family:var(--mono);color:var(--text3)"></span>
+        <span id="sumStatusBadge" style="margin-left:auto"></span>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+        <div class="card-title" style="margin-bottom:0">Maladaptive Behaviors</div>
+        <span style="font-size:10px;color:var(--text3);font-family:var(--mono)" id="malAutoNote"></span>
+      </div>
+      <div class="chip-legend">
+        <span class="chip-legend-item"><span style="width:10px;height:10px;border-radius:50%;background:var(--blue3);border:1px solid var(--blue2);display:inline-block"></span>Active</span>
+        <span class="chip-legend-item"><span style="width:10px;height:10px;border-radius:50%;background:#fffbeb;border:1px solid #d97706;display:inline-block"></span>On Hold</span>
+        <span class="chip-legend-item"><span style="width:10px;height:10px;border-radius:50%;background:#f0fdf4;border:1px solid #059669;display:inline-block"></span>Mastered</span>
+        <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">Click chip to remove · Right-click to change status · ✎ to rename · drag the bottom edge to resize</span>
+      </div>
+      <div class="chip-pool" id="malPool"></div>
+      <div class="chip-add-row">
+        <input id="malCustom" placeholder="Add custom behavior…" onkeydown="if(event.key==='Enter')addCustomBehavior('mal')">
+        <button class="btn btn-outline" style="padding:5px 10px;font-size:11px" onclick="addCustomBehavior('mal')">+ Add</button>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;margin-bottom:.75rem">
+        <div class="card-title" style="margin-bottom:0">Replacement / Acquisition Targets</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-outline" style="padding:4px 10px;font-size:10px" onclick="_fillRepFunctions()" title="Deduce la función que sirve cada programa a partir de su nombre. No toca las que ya tienen función.">Deducir funciones faltantes</button>
+          <span style="font-size:10px;color:var(--text3);font-family:var(--mono)" id="repAutoNote"></span>
+        </div>
+      </div>
+      <div class="chip-pool" id="repPool"></div>
+      <div class="chip-add-row">
+        <input id="repCustom" placeholder="Add custom replacement…" onkeydown="if(event.key==='Enter')addCustomBehavior('rep')">
+        <button class="btn btn-outline" style="padding:5px 10px;font-size:11px" onclick="addCustomBehavior('rep')">+ Add</button>
+      </div>
+
+      <div style="margin-top:.875rem" class="field">
+        <label>Preferred Reinforcers</label>
+        <input type="text" id="cReinf" placeholder="e.g. Cookies, iPad time, Verbal praise, Break, Playing outside, Preferred toy">
+      </div>
+      <div style="margin-top:.875rem" class="field">
+        <label>Actividades por programa (lista cerrada de la agencia, solo de ESTE cliente)</label>
+        <textarea id="cProgActs" rows="7" style="width:100%;box-sizing:border-box;font-family:inherit"
+          placeholder="Pega aquí el documento de actividades de la agencia. Acepta encabezados con o sin ## y viñetas *, • o -. Si el documento trae varios clientes, se toma la sección de este.&#10;&#10;Follow 1-2 steps instructions&#10;(Model Prompt)&#10;* Cleanup routines with toys&#10;* Snack preparation"></textarea>
+        <div id="cProgActsRead" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
+      </div>
+      <div style="margin-top:.875rem" class="field">
+        <label>Requisitos de documentación de la agencia (solo de ESTE cliente)</label>
+        <textarea id="cDocreq" rows="6" style="width:100%;box-sizing:border-box;font-family:inherit"
+          placeholder="Una regla por línea. Las cantidades se aplican al formulario y se verifican en cada programa. P. ej.:&#10;- Every replacement program must state its schedule of reinforcement.&#10;- The whole note must be written in the past tense.&#10;- Every replacement program must document at least THREE reinforcers.&#10;- Every replacement program must document at least TWO different activities.&#10;- Every replacement program must document at least TWO distinct types of SOCIAL reinforcement."></textarea>
+        <div id="cDocreqRead" style="font-size:11px;color:var(--text3);margin-top:4px"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveBehaviorPools()">Save behaviors</button>
+      </div>
+      <div class="msg" id="poolMsg"></div>
+      <div style="margin-top:10px;padding:8px 11px;border-left:3px solid var(--border2);background:var(--bg);border-radius:0 4px 4px 0">
+        <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px">Lo que el sistema ha aprendido de este cliente</div>
+        <div id="defectBox"></div>
+      </div>
+
+
+
+      <!-- ── MONTHLY DATA (Phase 1: extraction only) ── -->
+      <div style="margin-top:1.25rem;padding-top:1rem;border-top:2px solid var(--border2)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+          <div class="card-title" style="margin-bottom:0">Monthly Data Reference <span style="font-weight:400;color:var(--text3);font-size:10px">(RBT data report — used to validate congruence)</span></div>
+          <span id="monthDataBadge" style="font-size:10px;font-family:var(--mono)"></span>
+        </div>
+        <p style="font-size:11px;color:var(--text3);line-height:1.6;margin-bottom:.5rem">Upload the RBT's monthly data report (PDF). The system reads each behavior's "Monthly average" (per week), converts it to a daily average, and stores the baseline and active STO. The daily average becomes the reference for congruence checks against your shorter analyst sessions.</p>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <label class="btn btn-outline" style="cursor:pointer;position:relative;font-size:11px">
+            ↑ Upload monthly data PDF
+            <input type="file" accept=".pdf" style="position:absolute;inset:0;opacity:0;cursor:pointer" onchange="handleMonthlyDataFile(this.files[0]); this.value=''">
+          </label>
+          <select id="monthDataPeriod" class="dur-sel" style="width:auto;font-size:11px"></select>
+          <button class="btn btn-secondary" id="monthDataGenBtn" onclick="extractMonthlyData()" style="font-size:11px"><span class="spinner spinner-dark" id="monthDataSpinner" style="display:none"></span>Extract data</button>
+          <button class="btn btn-outline" style="font-size:11px" onclick="viewMonthlyData()">View stored data</button>
+        </div>
+        <div class="processing" id="monthDataProcessing" style="font-size:11px;margin-top:6px"></div>
+        <div id="monthDataTable" style="margin-top:8px"></div>
+        <div class="msg" id="monthDataMsg"></div>
+      </div>
+
+      <!-- RECENT NOTES -->
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border2)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:11px;font-family:var(--mono);font-weight:600;color:var(--text3);letter-spacing:.06em">RECENT NOTES</span>
+          <span style="font-size:10px;color:var(--text3)">last 30 · auto-saved on generation</span>
+        </div>
+        <div id="noteHistoryContainer" style="font-size:12px"></div>
+      </div>
+
+    </div><!-- end summaryCard -->
+
+  </div><!-- end tab-clients -->
+
+  <!-- ══════════ GENERATE TAB ══════════ -->
+  <div id="tab-gen" style="display:none">
+
+    <!-- THERAPIST SELECTOR -->
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:.5rem">
+      <span style="font-size:10px;font-family:var(--mono);color:var(--text3);white-space:nowrap;letter-spacing:.06em">THERAPIST:</span>
+      <select id="genTherapistSel" onchange="onGenTherapistChange()" style="flex:1;padding:6px 9px;border:1px solid var(--border2);border-radius:4px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        <option value="">— select therapist —</option>
+      </select>
+      <button onclick="_toggleCaseGuide()" id="genGuideBtn" title="Nota fija de este terapista: su setup de participantes por caso"
+        style="padding:6px 12px;border:1px solid var(--border2);border-radius:4px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer;white-space:nowrap;font-family:var(--sans);font-weight:500">📌 Setup</button>
+    </div>
+
+    <!-- FICHA DE CASOS — panel fijo: se consulta MIENTRAS se monta la sesión -->
+    <div id="caseGuideBox" style="display:none;margin:-2px 0 .75rem;padding:10px 13px;border:1px solid var(--amber,#b86c00);border-left:4px solid var(--amber,#b86c00);border-radius:6px;background:var(--surface)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:5px">
+        <div style="font-size:11px;font-weight:700;color:var(--text2)">📌 Setup de participantes — <span id="caseGuideWho" style="font-weight:500;color:var(--text3)"></span></div>
+        <span id="caseGuideMsg" style="font-size:10px;color:var(--text3)"></span>
+      </div>
+      <textarea id="caseGuideText" rows="8" oninput="_saveCaseGuide()" placeholder="Lo que este terapista indica sobre el setup de participantes de sus notas. Un caso por linea."
+        style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.7;resize:vertical;outline:none"></textarea>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.5">Es la misma nota de la ficha del terapista en <b>[ THERAPIST ]</b>. Se guarda sola en la nube (se ve desde cualquier dispositivo), se abre sola cuando el terapista ya tiene setup guardado, y no entra en ninguna nota.</div>
+    </div>
+
+    
+
+    <!-- CLIENT SELECTOR -->
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:1rem">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0" id="genDot"></span>
+      <span style="font-size:10px;font-family:var(--mono);color:var(--text3);white-space:nowrap;letter-spacing:.06em">CLIENT:</span>
+      <select id="genClientSel" onchange="onGenClientChange()" style="flex:1;padding:6px 9px;border:1px solid var(--border2);border-radius:4px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        <option value="">— select client —</option>
+      </select>
+      <div id="genAssessWarn" style="display:none;margin-top:6px;padding:7px 10px;border-radius:5px;font-size:11px;line-height:1.5"></div>
+      <button onclick="clearAll()" style="padding:6px 14px;border:1px solid var(--border2);border-radius:4px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer;white-space:nowrap;font-family:var(--sans);font-weight:500">Clear</button>
+    </div>
+
+    <!-- NOTE TYPE -->
+    <!-- SESSION CONFIGURATION — BCBA mode -->
+    <div id="bcbaModePanel">
+      <div class="card">
+        <div class="card-title">Supervision Type</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap">
+          <label id="srt-rbt"   class="sup-radio active"><input type="radio" name="supType" value="rbt"    checked onchange="onSupTypeChange()"> BCBA → RBT</label>
+          <label id="srt-bcaba" class="sup-radio"><input type="radio" name="supType" value="bcaba"  onchange="onSupTypeChange()"> BCBA → BCaBA</label>
+          <label id="srt-direct"class="sup-radio"><input type="radio" name="supType" value="direct" onchange="onSupTypeChange()"> BCBA direct (no supervisee)</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- SESSION CONFIGURATION — RBT mode -->
+    <div id="rbtModePanel" style="display:none">
+      <div style="padding:8px 14px;background:var(--blue3);border:1px solid var(--border2);border-radius:6px;margin-bottom:.75rem;font-size:12px;color:var(--text2)">
+        RBT direct treatment mode — CPT-97153. Generates note with 3–4 behaviors (ABC + interventions) and 3–4 replacement programs.
+      </div>
+    </div>
+
+    <!-- DATE + PLACE -->
+    <div class="card">
+      <div class="card-title">Session Details</div>
+      <div class="row2">
+        <div class="field"><label>Date</label><input type="date" id="genDate" autocomplete="off"></div>
+        <div class="field">
+          <label>Place of Service</label>
+          <select id="genPlace" onchange="onPlaceChange()">
+            <option value="Home (12)">Home (12)</option>
+            <option value="Office/Clinic (11)">Office/Clinic (11)</option>
+            <option value="School (03)">School (03)</option>
+            <option value="Community (99)">Community (99)</option>
+            <option value="Daycare (12)">Daycare (12)</option>
+            <option value="After School (99)">After School (99)</option>
+            <option value="Summer Camp (99)">Summer Camp (99)</option>
+            <option value="Other (99)">Other (99)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- PARTICIPANTS PRESENT -->
+      <div style="margin-top:12px">
+        <label style="font-size:12px;font-weight:500;color:var(--text2);display:block;margin-bottom:6px">Participants present during the session</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="pClient" checked onchange="this.dataset.manuallySet='1';onParticipantsChange()" style="accent-color:var(--blue)"> Client
+          </label>
+          <div id="pSupervisorRow">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="pSupervisor" checked onchange="this.dataset.manuallySet='1';onParticipantsChange()" style="accent-color:var(--blue)"> Supervisor (BCBA/BCaBA)
+          </label>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="pTechnician" checked onchange="this.dataset.manuallySet='1';onParticipantsChange()" style="accent-color:var(--blue)"> Technician (RBT/BCaBA)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="pCaregiver" checked onchange="this.dataset.manuallySet='1';onParticipantsChange()" style="accent-color:var(--blue)"> Caregiver / Parent
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="pOther" onchange="this.dataset.manuallySet='1';onParticipantsChange()" style="accent-color:var(--blue)"> Other
+          </label>
+        </div>
+        <div id="pOtherInput" style="display:none;margin-top:6px">
+          <input type="text" id="pOtherText" placeholder="Specify (e.g., school teacher, sibling)" style="width:100%;padding:5px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        </div>
+        <div id="p97156Warning" style="display:none;margin-top:6px;padding:6px 10px;background:#fffbeb;border:1px solid #d97706;border-radius:5px;font-size:11px;color:#92400e">
+          Note: Client not marked as present — the 97156 caregiver training note will reflect a session conducted without the client.
+        </div>
+      </div>
+    </div>
+
+    <!-- ENVIRONMENTAL CHANGES & MEDICAL CONCERNS -->
+    <div class="card">
+      <div class="card-title">Session Context</div>
+      <div class="field" style="margin-bottom:10px">
+        <label style="font-size:12px;font-weight:500;color:var(--text2)">Environmental Changes</label>
+        <input type="text" id="envChanges" placeholder="e.g. New caregiver, change in routine, visit to relatives…" style="width:100%;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);margin-top:4px">
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label style="font-size:12px;font-weight:500;color:var(--text2)">Medical Concerns</label>
+        <input type="text" id="medConcerns" placeholder="e.g. Medication change, illness, poor sleep, medical appointment…" style="width:100%;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);margin-top:4px">
+      </div>
+      <div class="field">
+        <label style="font-size:12px;font-weight:500;color:#dc2626">⚠ Crisis Situation</label>
+        <input type="text" id="crisisSituation" placeholder="Describe the crisis event only if one occurred during the session…" style="width:100%;padding:6px 10px;border:1px solid #fca5a5;border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);margin-top:4px">
+        <p style="font-size:10px;color:#dc2626;margin:3px 0 0;line-height:1.4">Response blocking and physical restrictions appear in the note ONLY when this field is filled. Leave blank for all routine sessions.</p>
+      </div>
+    </div>
+
+    <!-- EMERGING / OUT-OF-PLAN ITEMS -->
+    <div class="card" id="emergingPanel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+        <div class="card-title" style="margin:0">Emerging Clinical Items</div>
+        <span style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.04em">observed between assessments — session-specific only</span>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin:0 0 12px">Document behaviors, replacements, or interventions that emerged during observation or protocol modification, prior to reassessment. These will be referenced in the note as newly observed/emerging — not as formal plan targets.</p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--red);font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">NEW MALADAPTIVE BEHAVIORS</label>
+          <textarea id="emergingMal" rows="3" placeholder="One per line&#10;e.g. Biting&#10;Property destruction" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#0a7c4e;font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">NEW REPLACEMENT BEHAVIORS</label>
+          <textarea id="emergingRep" rows="3" placeholder="One per line&#10;e.g. Requesting break&#10;Using visual schedule" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--blue);font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">NEW INTERVENTIONS</label>
+          <textarea id="emergingInt" rows="3" placeholder="One per line&#10;e.g. High-p sequence&#10;Demand fading" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        </div>
+      </div>
+      <div id="emergingIndicator" style="display:none;margin-top:6px;font-size:11px;color:var(--blue);font-family:var(--mono)">✓ Emerging items will be documented in the note as newly observed prior to reassessment</div>
+      <div style="margin-top:10px">
+        <label style="font-size:11px;font-weight:600;color:#7c3aed;font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">CLINICAL NOTES FOR THIS SESSION</label>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:5px;line-height:1.5">Free text — any context the model should consider when writing this note: specific protocol modifications, particular caregiver concerns, unusual events, reinforcer changes, generalization targets, or anything not captured above. This text is passed directly to the model.</div>
+        <textarea id="emergingClinicalNotes" rows="3" placeholder="e.g. Protocol modification: increase DRO interval from 30s to 60s for aggression. Caregiver reported sleep deprivation last night. Introduce delay to reinforcement for manding program..." oninput="updateEmergingIndicator()" style="width:100%;padding:7px 9px;border:1px solid rgba(124,58,237,.35);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.6"></textarea>
+      </div>
+    </div>
+
+    <!-- COVERAGE PANEL -->
+    <div id="coveragePanel" style="display:none;margin-bottom:1rem"></div>
+
+    <!-- NOTES SELECTOR -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom:1rem">Select Notes to Generate</div>
+
+      <!-- 97153 row — RBT only -->
+      <div class="note-sel-row" id="nsr97153" style="display:none">
+        <label class="note-sel-check">
+          <input type="checkbox" id="chk97153" checked onchange="onNoteCheckChange('97153')">
+          <div class="note-sel-info">
+            <span class="note-sel-code">97153</span>
+            <span class="note-sel-label">Adaptive Behavior Treatment by Protocol — RBT Direct</span>
+          </div>
+        </label>
+        <div class="note-dur-wrap" id="durWrap97153">
+          <label style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.05em">DURATION</label>
+          <select id="dur97153" class="dur-sel"></select>
+        </div>
+      </div>
+
+      <!-- BCBA notes — hidden in RBT mode -->
+      <div id="bcbaNotesSection">
+
+      <!-- 97155 row + SESSION TEMPLATE PANEL -->
+      <div id="nsr97155">
+        <div class="note-sel-row" style="border-radius:6px 6px 0 0;border-bottom:none" id="nsr97155inner">
+          <label class="note-sel-check">
+            <input type="checkbox" id="chk97155" checked onchange="onNoteCheckChange('97155')">
+            <div class="note-sel-info">
+              <span class="note-sel-code">97155</span>
+              <span class="note-sel-label" id="lbl97155">Behavior Treatment with Protocol Modification — RBT</span>
+            </div>
+          </label>
+          <div class="note-dur-wrap" id="durWrap97155">
+            <label style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.05em">DURATION</label>
+            <select id="dur97155" class="dur-sel"></select>
+          </div>
+        </div>
+
+        <!-- CASP 97155 SECTIONS PANEL — matches Office Puzzle / EHR form layout -->
+        <div class="sess-panel open" id="sessPanel97155" style="border-radius:0 0 6px 6px;border-top:1px dashed var(--border2);padding:10px 12px">
+
+          <!-- BLOCK 1: Face-to-face observations -->
+          <div style="border:1px solid var(--border2);border-radius:5px;margin-bottom:8px;overflow:hidden">
+            <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="casp_A" onchange="onCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+              <span style="font-size:11px;font-weight:700;color:#fff;line-height:1.3">Face-to-face observations were made to determine if protocol components are functioning effectively or require adjustments</span>
+            </div>
+            <div id="casp_A_detail" style="padding:8px 10px;background:var(--surface)">
+              <label style="display:flex;align-items:flex-start;gap:7px;font-size:11px;color:var(--text2);cursor:pointer;margin-bottom:5px;line-height:1.4">
+                <input type="radio" name="casp_A_result" value="ok" checked style="margin-top:1px;accent-color:var(--blue);flex-shrink:0" onchange="onCaspChange()">
+                This session's observations indicated that the protocol components were functioning effectively and therefore no adjustments were clinically indicated.
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:7px;font-size:11px;color:var(--text2);cursor:pointer;line-height:1.4">
+                <input type="radio" name="casp_A_result" value="adj" style="margin-top:1px;accent-color:var(--blue);flex-shrink:0" onchange="onCaspChange()">
+                This session's observations indicated that the protocol components required adjustments.
+              </label>
+            </div>
+          </div>
+
+          <!-- BLOCK 2: Adjustments to protocol -->
+          <div style="border:1px solid var(--border2);border-radius:5px;margin-bottom:8px;overflow:hidden">
+            <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="casp_B" onchange="onCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+              <span style="font-size:11px;font-weight:700;color:#fff">Adjustments were made to the selected components of the protocol</span>
+            </div>
+            <div id="casp_B_detail" style="display:none;padding:8px 10px;background:var(--surface)">
+              <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Select all that apply:</div>
+              <div id="casp_B_items" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 8px"></div>
+            </div>
+          </div>
+
+          <!-- BLOCK 3: Active direction -->
+          <div style="border:1px solid var(--border2);border-radius:5px;margin-bottom:8px;overflow:hidden">
+            <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="casp_C" onchange="onCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+              <span style="font-size:11px;font-weight:700;color:#fff">Active direction (face-to-face) was given to a technician as they delivered ABA services</span>
+            </div>
+            <div id="casp_C_detail" style="display:none;padding:8px 10px;background:var(--surface)">
+              <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px">Direction to the technician included the activities selected below:</div>
+              <div id="casp_C_items" style="display:flex;flex-direction:column;gap:4px"></div>
+            </div>
+          </div>
+
+          <!-- BLOCK 4: QHP implementation -->
+          <div style="border:1px solid var(--border2);border-radius:5px;margin-bottom:10px;overflow:hidden">
+            <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+              <input type="checkbox" id="casp_D" onchange="onCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+              <span style="font-size:11px;font-weight:700;color:#fff">QHP implementation of the protocol with the client related to</span>
+            </div>
+            <div id="casp_D_detail" style="display:none;padding:8px 10px;background:var(--surface)">
+              <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);cursor:pointer;margin-bottom:4px">
+                <input type="checkbox" class="casp_D_item" value="Determining if changes were needed to improve client progress" style="accent-color:var(--blue)">
+                Determining if changes were needed to improve client progress.
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);cursor:pointer">
+                <input type="checkbox" class="casp_D_item" value="Testing of a modified protocol" style="accent-color:var(--blue)">
+                Testing of a modified protocol.
+              </label>
+            </div>
+          </div>
+
+          <!-- ANALYST CUSTOM GOALS -->
+          <div style="padding-top:10px;border-top:1px dashed var(--border2)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <label style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.05em">ANALYST-SUGGESTED GOALS <span style="font-weight:400">(optional)</span></label>
+              <button onclick="document.getElementById('customGoals97155').value=''; updateCustomGoalsIndicator()" style="font-size:10px;color:var(--text3);background:none;border:none;cursor:pointer;padding:0">✕ clear</button>
+            </div>
+            <textarea id="customGoals97155" rows="2"
+              oninput="updateCustomGoalsIndicator()"
+              placeholder="Enter goals suggested by the analyst, one per line or comma-separated…"
+              style="width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+            <div id="customGoalsIndicator" style="display:none;margin-top:4px;font-size:11px;color:var(--green)">✓ Custom goals will be used for this session</div>
+          </div>
+
+          <!-- BCaBA SUPERVISION (only visible when supType is bcaba) -->
+          <div id="bcabaSupCard97155" style="display:none;padding-top:10px;border-top:1px dashed var(--border2);margin-top:10px">
+            <div style="font-size:10px;font-family:var(--mono);color:#7c3aed;letter-spacing:.05em;font-weight:700;margin-bottom:6px">BCaBA SUPERVISION — BACB COMPONENTS</div>
+            <div style="font-size:11px;font-weight:600;color:var(--text2);margin:6px 0 4px">Supervision components covered:</div>
+            <div id="bcabaSupComp97155" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:8px"></div>
+            <div style="font-size:11px;font-weight:600;color:var(--text2);margin:6px 0 4px">BACB Task List skills covered during this meeting:</div>
+            <div id="bcabaSupTask97155" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:8px"></div>
+            <div style="font-size:11px;font-weight:600;color:var(--text2);margin:6px 0 4px">Evaluation of supervisee performance:</div>
+            <div id="bcabaSupEval97155" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px"></div>
+          </div>
+        </div>
+      </div><!-- end nsr97155 -->
+
+      </div><!-- end bcbaNotesSection -->
+
+      <!-- 97156 row — always visible -->
+      <div class="note-sel-row" id="nsr97156" style="margin-top:6px;flex-wrap:wrap;gap:4px">
+        <label class="note-sel-check">
+          <input type="checkbox" id="chk97156" onchange="onNoteCheckChange('97156')">
+          <div class="note-sel-info">
+            <span class="note-sel-code">97156</span>
+            <span class="note-sel-label">Parent / Caregiver Training</span>
+          </div>
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap">
+
+          <!-- Independent client presence for 97156 -->
+          <label id="clientPresent156Wrap" style="display:none;align-items:center;gap:5px;font-size:11px;color:var(--text2);cursor:pointer;padding:3px 8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg)">
+            <input type="checkbox" id="clientPresent156" style="accent-color:var(--blue)">
+            <span>Client present</span>
+          </label>
+
+          <!-- RBT present during 97156 — unchecked by default -->
+          <label id="rbtPresent156Wrap" style="display:none;align-items:center;gap:5px;font-size:11px;color:var(--text2);cursor:pointer;padding:3px 8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg)" title="Only check if the RBT was physically present during parent training. Billing the same hour for both 97155 and 97156 with RBT present may trigger overlapping service audit.">
+            <input type="checkbox" id="rbtPresent156" style="accent-color:var(--blue)">
+            <span>RBT present</span>
+          </label>
+
+          <!-- Session order -->
+          <div id="sessionOrderWrap" style="display:none;align-items:center;gap:5px;font-size:10px;color:var(--text3);font-family:var(--mono)">
+            ORDER:
+            <select id="sessionOrder" style="font-size:10px;padding:3px 6px;border:1px solid var(--border2);border-radius:4px;background:var(--surface);color:var(--text);font-family:var(--mono);cursor:pointer">
+              <option value="none">not specified</option>
+              <option value="155first">97155 first</option>
+              <option value="156first">97156 first</option>
+            </select>
+          </div>
+
+          <div class="note-dur-wrap" id="durWrap97156" style="visibility:hidden">
+            <label style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.05em">DURATION</label>
+            <select id="dur97156" class="dur-sel"></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manual Goals for 97156 -->
+      <div id="goals156Row" style="display:none;margin-top:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border2);border-radius:6px">
+        <label style="font-size:11px;font-weight:600;color:var(--text2);font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:6px">97156 TRAINING OBJECTIVES (optional — leave blank for auto-rotation)</label>
+        <textarea id="customGoals156" rows="2" placeholder="Enter specific parent training objectives for this session (e.g., 'Train caregiver to implement prompting procedures for safety skills')" style="width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.4"></textarea>
+      </div>
+
+      <!-- Supervision Log row -->
+      <div class="note-sel-row" id="nsrSup" style="margin-top:6px">
+        <label class="note-sel-check">
+          <input type="checkbox" id="chkSup" onchange="onNoteCheckChange('sup')">
+          <div class="note-sel-info">
+            <span class="note-sel-code">SUP</span>
+            <span class="note-sel-label" id="lblSup">Supervision Log — RBT</span>
+          </div>
+        </label>
+        <div class="note-dur-wrap" id="durWrapSup" style="visibility:hidden"
+             title="Tiempo de la supervisión. Es independiente del de la nota 97155: la sesión puede incluir supervisión sin que toda la sesión lo sea. Déjalo en «Not specified» si no quieres registrar un tiempo.">
+          <label style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.05em">DURATION (opcional)</label>
+          <select id="durSup" class="dur-sel"></select>
+        </div>
+      </div>
+
+      <div class="btn-row" style="margin-top:1.25rem;display:flex;gap:10px">
+        <button class="btn btn-primary" id="genBtn" disabled onclick="showSessionReview()" style="padding:10px 28px;font-size:13px;flex:1">
+          <span class="spinner" id="genSpinner" style="display:none"></span>Generate Selected Notes
+        </button>
+        <button class="btn btn-secondary" onclick="clearAll()" style="padding:10px 28px;font-size:13px;background:var(--surface);color:var(--text);border:1px solid var(--border2)">
+          Clear
+        </button>
+      </div>
+      <div class="msg" id="genMsg"></div>
+    </div>
+
+    <!-- OUTPUTS (stacked, one per note) -->
+    <div id="outputsContainer"></div>
+    <div id="highlightLegend" style="display:none;margin-top:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border2);border-radius:6px;font-size:11px;color:var(--text3)">
+      <span style="color:#7c3aed;font-weight:700">Purple</span> = client name &nbsp;|&nbsp; <span style="color:#dc2626;font-weight:600">Red</span> = maladaptive behaviors &nbsp;|&nbsp; <span style="color:#059669;font-weight:600">Green</span> = replacement behaviors &nbsp;|&nbsp; <span class="numflag">123</span> = n&uacute;meros &mdash; revisa cada cifra: solo debe quedar la que venga de los datos provistos. &nbsp;&mdash;&nbsp; verify these match this client's plan. Copy exports plain text.
+    </div>
+
+  </div><!-- end gen tab -->
+
+  <!-- ══════════ ANALYST TAB (analystgen) — 97155 only ══════════ -->
+  <div id="tab-analystgen" style="display:none">
+
+    <div style="padding:8px 14px;background:linear-gradient(135deg,rgba(124,58,237,.08),rgba(139,92,246,.03));border:1px solid rgba(124,58,237,.3);border-radius:6px;margin-bottom:1rem;font-size:12px;color:var(--text2)">
+      <strong style="color:#7c3aed">ANALYST MODE</strong> — CPT-97155 only, in its three modalities (BCBA&#8594;RBT, BCBA&#8594;BCaBA, BCBA Direct). No date field: the analyst enters the date manually after pasting the note. The note begins with a Behaviors / Replacements / Protocol Modification header, and the final order is Plan &#8594; closing sentence &#8594; observed client response (last).
+    </div>
+
+    <!-- ANALYST SELECTOR — client selection is gated by the chosen analyst (non-RBT therapist) -->
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:.5rem">
+      <span style="font-size:10px;font-family:var(--mono);color:var(--text3);white-space:nowrap;letter-spacing:.06em">ANALYST:</span>
+      <select id="anTherapistSel" onchange="onAnalystTherapistChange()" style="flex:1;padding:6px 9px;border:1px solid var(--border2);border-radius:4px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        <option value="">— select analyst —</option>
+      </select>
+    </div>
+
+    
+    <!-- CLIENT SELECTOR -->
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:1rem">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--text3);flex-shrink:0" id="anDot"></span>
+      <span style="font-size:10px;font-family:var(--mono);color:var(--text3);white-space:nowrap;letter-spacing:.06em">CLIENT:</span>
+      <select id="anClientSel" onchange="onAnalystClientChange()" style="flex:1;padding:6px 9px;border:1px solid var(--border2);border-radius:4px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        <option value="">— select client —</option>
+      </select>
+      <button onclick="clearAnalyst()" style="padding:6px 14px;border:1px solid var(--border2);border-radius:4px;font-size:12px;background:var(--surface);color:var(--text);cursor:pointer;white-space:nowrap;font-family:var(--sans);font-weight:500">Clear</button>
+    </div>
+
+    <!-- BATCH MENSUAL — right after client selection; one selectable row per note (no date) -->
+    <details id="anBatchPanel" style="margin-top:0;margin-bottom:1rem;border:1px solid var(--border2);border-radius:6px;padding:10px 14px;background:var(--surface)" ontoggle="if(this.open&&typeof anBatchEnsureRows==='function')anBatchEnsureRows()">
+      <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2)">Batch mensual &#8212; generar varias notas 97155 y exportar DOCX</summary>
+      <div style="font-size:11px;color:var(--text3);margin:8px 0 8px">Una fila por nota: <span style="font-family:var(--mono)">tipo | lugar</span> &#8212; selecciona los valores (sin escribir, para evitar errores). La duraci&oacute;n se toma del selector de Session Details. Los componentes de modificaci&oacute;n del protocolo se rotan autom&aacute;ticamente entre las notas.</div>
+      <div id="anBatchRows" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <label for="anBatchMonth" style="font-size:11px;font-weight:600;color:var(--text2)">Mes del lote</label>
+        <input type="month" id="anBatchMonth" onchange="_anSaveBatchMonth()"
+          style="padding:5px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);font-family:var(--sans)">
+        <span style="font-size:10px;color:var(--text3)">Titula el DOCX y nombra el archivo. No entra en el texto de las notas: la fecha de cada sesi&oacute;n se pone a mano.</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="anBatchAddRow()" style="padding:6px 12px;font-size:12px">+ Agregar nota</button>
+        <button class="btn btn-primary" id="anBatchRunBtn" onclick="anBatchRun()" style="padding:7px 16px;font-size:12px">Generar batch</button>
+        <button class="btn" id="anBatchExportBtn" onclick="anBatchExportDocx()" disabled style="padding:7px 16px;font-size:12px">Exportar DOCX</button>
+        <span id="anBatchProg" style="font-size:11px;color:var(--text3)"></span>
+      </div>
+    </details>
+
+    <!-- SUPERVISION TYPE -->
+    <div class="card">
+      <div class="card-title">Supervision Type</div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap">
+        <label id="an-srt-rbt"    class="sup-radio active"><input type="radio" name="anSupType" value="rbt"    checked onchange="onAnalystSupTypeChange()"> BCBA &#8594; RBT</label>
+        <label id="an-srt-bcaba"  class="sup-radio"><input type="radio" name="anSupType" value="bcaba"  onchange="onAnalystSupTypeChange()"> BCBA &#8594; BCaBA</label>
+        <label id="an-srt-direct" class="sup-radio"><input type="radio" name="anSupType" value="direct" onchange="onAnalystSupTypeChange()"> BCBA direct (no supervisee)</label>
+      </div>
+    </div>
+
+    <!-- SESSION DETAILS (no date) -->
+    <div class="card">
+      <div class="card-title">Session Details <span style="font-size:10px;font-family:var(--mono);color:var(--text3);font-weight:400">— no date (analyst enters it manually)</span></div>
+      <div class="row2">
+        <div class="field">
+          <label>Place of Service</label>
+          <select id="anPlace" onchange="_anOnPlaceChange()">
+            <option value="Home (12)">Home (12)</option>
+            <option value="Office/Clinic (11)">Office/Clinic (11)</option>
+            <option value="School (03)">School (03)</option>
+            <option value="Community (99)">Community (99)</option>
+            <option value="Daycare (12)">Daycare (12)</option>
+            <option value="After School (99)">After School (99)</option>
+            <option value="Summer Camp (99)">Summer Camp (99)</option>
+            <option value="Other (99)">Other (99)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Duration (CPT-97155)</label>
+          <select id="anDur97155" class="dur-sel" style="width:100%"></select>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.5">Es el tiempo de la SESIÓN 97155, no el de la supervisión. Elige «Not specified» si no quieres que aparezca ningún tiempo en el texto.</div>
+        </div>
+      </div>
+
+      <!-- PARTICIPANTS PRESENT -->
+      <div style="margin-top:12px">
+        <label style="font-size:12px;font-weight:500;color:var(--text2);display:block;margin-bottom:6px">Participants present during the session</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="anPClient" checked style="accent-color:var(--blue)"> Client
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="anPSupervisor" checked style="accent-color:var(--blue)"> Supervisor (BCBA)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="anPTechnician" checked style="accent-color:var(--blue)"> Technician (RBT/BCaBA)
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="anPCaregiver" checked onchange="this.dataset.manuallySet='1'" style="accent-color:var(--blue)"> Caregiver / Parent
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="anPOther" onchange="this.dataset.manuallySet='1';document.getElementById('anPOtherInput').style.display=this.checked?'block':'none'" style="accent-color:var(--blue)"> Other
+          </label>
+        </div>
+        <div id="anPOtherInput" style="display:none;margin-top:6px">
+          <select id="anPOtherPreset" onchange="_anOtherPreset(this.value)" style="width:100%;padding:5px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);margin-bottom:5px">
+            <option value="">— elegir o escribir abajo —</option>
+            <option value="the classroom teacher">the classroom teacher</option>
+            <option value="the teacher's assistant">the teacher's assistant</option>
+            <option value="the instructor">the instructor</option>
+            <option value="the school staff">the school staff</option>
+            <option value="the daycare staff">the daycare staff</option>
+            <option value="the camp counselor">the camp counselor</option>
+            <option value="the school-based aide">the school-based aide</option>
+            <option value="the sibling">the sibling</option>
+          </select>
+          <input type="text" id="anPOtherText" placeholder="Specify (e.g., school teacher, sibling)" style="width:100%;padding:5px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        </div>
+        <div id="anPlaceHint" style="display:none;font-size:10px;color:var(--amber,#b86c00);margin-top:6px;line-height:1.5"></div>
+      </div>
+    </div>
+
+    <!-- SESSION CONTEXT -->
+    <div class="card">
+      <div class="card-title">Session Context</div>
+      <div class="field" style="margin-bottom:10px">
+        <label style="font-size:12px;font-weight:500;color:var(--text2)">Environmental Changes</label>
+        <input type="text" id="anEnvChanges" placeholder="e.g. New caregiver, change in routine, visit to relatives…" style="width:100%;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);margin-top:4px">
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label style="font-size:12px;font-weight:500;color:var(--text2)">Medical Concerns</label>
+        <input type="text" id="anMedConcerns" placeholder="e.g. Medication change, illness, poor sleep, medical appointment…" style="width:100%;padding:6px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);margin-top:4px">
+      </div>
+      <div class="field">
+        <label style="font-size:12px;font-weight:500;color:#dc2626">&#9888; Crisis Situation</label>
+        <input type="text" id="anCrisis" placeholder="Describe the crisis event only if one occurred during the session…" style="width:100%;padding:6px 10px;border:1px solid #fca5a5;border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);margin-top:4px">
+        <p style="font-size:10px;color:#dc2626;margin:3px 0 0;line-height:1.4">Response blocking and physical restrictions appear in the note ONLY when this field is filled. Leave blank for routine sessions.</p>
+      </div>
+    </div>
+
+    <!-- EMERGING / PROTOCOL MODIFICATION ITEMS -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+        <div class="card-title" style="margin:0">Protocol Modification &amp; Emerging Items</div>
+        <span style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.04em">observed between assessments — session-specific only</span>
+      </div>
+      <!-- REQUIRED: protocol modification component(s) — a 97155 note always modifies a protocol -->
+      <div style="background:rgba(124,58,237,.05);border:1px solid rgba(124,58,237,.3);border-radius:6px;padding:10px 12px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <label style="font-size:11px;font-weight:700;color:#7c3aed;font-family:var(--mono);letter-spacing:.04em">PROTOCOL MODIFICATION — COMPONENT(S) MODIFIED <span style="color:#dc2626">* required</span></label>
+          <span id="anProtoModCount" style="font-size:10px;font-family:var(--mono);color:var(--text3)">0 selected</span>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px;line-height:1.5">CPT-97155 always documents a protocol modification. Select at least one component modified this session.</div>
+        <div id="anProtoMod_items" style="display:grid;grid-template-columns:1fr 1fr;gap:5px 10px"></div>
+      </div>
+
+      <p style="font-size:11px;color:var(--text3);margin:0 0 12px">Document behaviors, replacements, or interventions that emerged during observation or protocol modification, prior to reassessment.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--red);font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">NEW MALADAPTIVE BEHAVIORS</label>
+          <textarea id="anEmergingMal" rows="3" placeholder="One per line" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:#0a7c4e;font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">NEW REPLACEMENT BEHAVIORS</label>
+          <textarea id="anEmergingRep" rows="3" placeholder="One per line" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--blue);font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">NEW INTERVENTIONS</label>
+          <textarea id="anEmergingInt" rows="3" placeholder="One per line" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label style="font-size:11px;font-weight:600;color:#7c3aed;font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">PROTOCOL MODIFICATION / CLINICAL NOTES FOR THIS SESSION</label>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:5px;line-height:1.5">Free text describing the specific protocol modification executed this session (this is surfaced verbatim in the header line and passed to the model).</div>
+        <textarea id="anEmergingClinicalNotes" rows="3" placeholder="e.g. Increased DRO interval from 30s to 60s for aggression; introduced delay to reinforcement for manding program…" style="width:100%;padding:7px 9px;border:1px solid rgba(124,58,237,.35);border-radius:6px;font-size:11px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.6"></textarea>
+      </div>
+    </div>
+
+    <!-- BASP / CASP 97155 SECTIONS -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom:10px">CPT-97155 — Protocol Modification Sections (BASP/CASP)</div>
+      <div style="border-radius:6px;padding:0">
+
+        <!-- BLOCK A -->
+        <div style="border:1px solid var(--border2);border-radius:5px;margin-bottom:8px;overflow:hidden">
+          <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="anCasp_A" onchange="onAnalystCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+            <span style="font-size:11px;font-weight:700;color:#fff;line-height:1.3">Face-to-face observations were made to determine if protocol components are functioning effectively or require adjustments</span>
+          </div>
+          <div id="anCasp_A_detail" style="display:none;padding:8px 10px;background:var(--surface)">
+            <label style="display:flex;align-items:flex-start;gap:7px;font-size:11px;color:var(--text2);cursor:pointer;margin-bottom:5px;line-height:1.4">
+              <input type="radio" name="anCasp_A_result" value="ok" checked style="margin-top:1px;accent-color:var(--blue);flex-shrink:0" onchange="onAnalystCaspChange()">
+              This session's observations indicated that the protocol components were functioning effectively and therefore no adjustments were clinically indicated.
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:7px;font-size:11px;color:var(--text2);cursor:pointer;line-height:1.4">
+              <input type="radio" name="anCasp_A_result" value="adj" style="margin-top:1px;accent-color:var(--blue);flex-shrink:0" onchange="onAnalystCaspChange()">
+              This session's observations indicated that the protocol components required adjustments.
+            </label>
+          </div>
+        </div>
+
+        <!-- BLOCK B -->
+        <div style="border:1px solid var(--border2);border-radius:5px;margin-bottom:8px;overflow:hidden">
+          <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="anCasp_B" onchange="onAnalystCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+            <span style="font-size:11px;font-weight:700;color:#fff">Adjustments were made to the selected components of the protocol</span>
+          </div>
+          <div id="anCasp_B_detail" style="display:none;padding:8px 10px;background:var(--surface)">
+            <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Select all that apply:</div>
+            <div id="anCasp_B_items" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 8px"></div>
+          </div>
+        </div>
+
+        <!-- BLOCK C -->
+        <div id="anCasp_C_wrap" style="border:1px solid var(--border2);border-radius:5px;margin-bottom:8px;overflow:hidden">
+          <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="anCasp_C" onchange="onAnalystCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+            <span style="font-size:11px;font-weight:700;color:#fff">Active direction (face-to-face) was given to a technician as they delivered ABA services</span>
+          </div>
+          <div id="anCasp_C_detail" style="display:none;padding:8px 10px;background:var(--surface)">
+            <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px">Direction to the technician included the activities selected below:</div>
+            <div id="anCasp_C_items" style="display:flex;flex-direction:column;gap:4px"></div>
+          </div>
+        </div>
+
+        <!-- BLOCK D -->
+        <div style="border:1px solid var(--border2);border-radius:5px;margin-bottom:10px;overflow:hidden">
+          <div style="background:#1e3a5f;padding:7px 10px;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="anCasp_D" onchange="onAnalystCaspChange()" style="accent-color:#fff;width:14px;height:14px;flex-shrink:0">
+            <span style="font-size:11px;font-weight:700;color:#fff">QHP implementation of the protocol with the client related to</span>
+          </div>
+          <div id="anCasp_D_detail" style="display:none;padding:8px 10px;background:var(--surface)">
+            <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);cursor:pointer;margin-bottom:4px">
+              <input type="checkbox" class="anCasp_D_item" value="Determining if changes were needed to improve client progress" style="accent-color:var(--blue)">
+              Determining if changes were needed to improve client progress.
+            </label>
+            <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);cursor:pointer">
+              <input type="checkbox" class="anCasp_D_item" value="Testing of a modified protocol" style="accent-color:var(--blue)">
+              Testing of a modified protocol.
+            </label>
+          </div>
+        </div>
+
+        <!-- ANALYST CUSTOM GOALS -->
+        <div style="padding-top:10px;border-top:1px dashed var(--border2)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <label style="font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:.05em">ANALYST-SUGGESTED GOALS <span style="font-weight:400">(optional)</span></label>
+            <button onclick="document.getElementById('anCustomGoals97155').value=''" style="font-size:10px;color:var(--text3);background:none;border:none;cursor:pointer;padding:0">&#10005; clear</button>
+          </div>
+          <textarea id="anCustomGoals97155" rows="2" placeholder="Enter goals suggested by the analyst, one per line or comma-separated…" style="width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);font-family:var(--sans);resize:vertical;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        </div>
+
+        <!-- BCaBA SUPERVISION (only visible when anSupType is bcaba) -->
+        <div id="anBcabaSupCard" style="display:none;padding-top:10px;border-top:1px dashed var(--border2);margin-top:10px">
+          <div style="font-size:10px;font-family:var(--mono);color:#7c3aed;letter-spacing:.05em;font-weight:700;margin-bottom:6px">BCaBA SUPERVISION — BACB COMPONENTS</div>
+          <div style="font-size:11px;font-weight:600;color:var(--text2);margin:6px 0 4px">Supervision components covered:</div>
+          <div id="anBcabaSupComp" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:8px"></div>
+          <div style="font-size:11px;font-weight:600;color:var(--text2);margin:6px 0 4px">BACB Task List skills covered during this meeting:</div>
+          <div id="anBcabaSupTask" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:8px"></div>
+          <div style="font-size:11px;font-weight:600;color:var(--text2);margin:6px 0 4px">Evaluation of supervisee performance:</div>
+          <div id="anBcabaSupEval" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BEHAVIOR FREQUENCY (inline) -->
+    <div class="card" id="anFreqSection" style="display:none">
+      <div class="card-title" style="margin-bottom:8px">Behavior Frequency Counts <span style="font-size:10px;font-family:var(--mono);color:var(--text3);font-weight:400">(optional — observed occurrences for this session)</span></div>
+      <div id="anFreqRows"></div>
+    </div>
+
+    <!-- PREVIOUS NOTE (optional) -->
+    <div class="card">
+      <div class="card-title" style="margin-bottom:6px">Previous 97155 Note <span style="font-size:10px;font-family:var(--mono);color:var(--text3);font-weight:400">(optional — for plan continuity)</span></div>
+      <textarea id="anPrevPlan" rows="2" placeholder="Paste the previous 97155 analyst session note for plan continuity (optional)…" style="width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
+    </div>
+
+    <div class="btn-row" style="margin-top:1.25rem;display:flex;gap:10px">
+      <button class="btn btn-primary" id="anGenBtn" disabled onclick="_lockDuring('generateAnalystSession','la generación de la nota de analista','anClientSel')" style="padding:10px 28px;font-size:13px;flex:1">
+        <span class="spinner" id="anGenSpinner" style="display:none"></span>Generate Analyst 97155 Note
+      </button>
+      <button class="btn btn-secondary" onclick="clearAnalyst()" style="padding:10px 28px;font-size:13px;background:var(--surface);color:var(--text);border:1px solid var(--border2)">
+        Clear
+      </button>
+    </div>
+    <div class="msg" id="anMsg"></div>
+
+    <!-- OUTPUTS -->
+    <div id="anOutputsContainer"></div>
+
+  </div><!-- end analystgen tab -->
+
+  <!-- SUP LOG TAB -->
+  <div id="tab-sup" style="display:none">
+
+    <div style="padding:8px 14px;background:var(--blue3);border:1px solid var(--border2);border-radius:6px;margin-bottom:1rem;font-size:12px;color:var(--text2)">
+      Paste an existing CPT-97155 session note to generate its supervision log. Use this when the supervision note was not generated at session time.
+    </div>
+
+    <div class="card">
+      <div class="card-title">Supervision Details</div>
+      <div class="row3" style="margin-bottom:10px">
+        <div class="field">
+          <label>Supervisee</label>
+          <select id="supFromNoteType" style="width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+            <option value="rbt">BCBA &rarr; RBT</option>
+            <option value="bcaba">BCBA &rarr; BCaBA</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Supervisor Credential</label>
+          <select id="supFromNoteCred" style="width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+            <option value="BCBA">BCBA</option>
+            <option value="BCBA-D">BCBA-D</option>
+            <option value="BCaBA">BCaBA</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Client Pseudonym</label>
+          <input type="text" id="supFromNoteClient" placeholder="e.g. Carlos, Client A..." style="width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Paste CPT-97155 Session Note</div>
+      <textarea id="supFromNoteText" rows="12" placeholder="Paste the full 97155 session note here..." style="width:100%;padding:9px 11px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);resize:vertical;line-height:1.65;box-sizing:border-box"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+        <button class="btn btn-primary" onclick="_lockDuring('generateSupFromNote','la generación del supervision log','genClientSel')" id="supFromNoteBtn" style="padding:9px 24px;font-size:13px">
+          <span class="spinner" id="supFromNoteSpinner" style="display:none"></span>Generate Supervision Log
+        </button>
+        <button class="btn btn-outline" onclick="clearSupFromNote()" style="font-size:12px">Clear</button>
+      </div>
+      <div class="msg" id="supFromNoteMsg"></div>
+    </div>
+
+    <div id="supFromNoteOutput" style="display:none">
+      <div class="card" style="border-color:var(--blue)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--blue);letter-spacing:.1em">SUPERVISION LOG</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-outline" onclick="copySupFromNote()" style="font-size:11px;padding:4px 12px">Copy</button>
+            <button class="btn btn-secondary" onclick="_lockDuring('generateSupFromNote','la generación del supervision log','genClientSel')" style="font-size:11px;padding:4px 12px">Regenerate</button>
+          </div>
+        </div>
+        <div id="supFromNoteResult" contenteditable="true" style="background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:14px 16px;font-size:13px;line-height:1.75;color:var(--text);white-space:pre-wrap;min-height:100px"></div>
+      </div>
+    </div>
+
+  </div><!-- end sup tab -->
+
+<!-- IMPORT CLIENT MODAL -->
+<div id="importClientModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:10px;padding:24px 28px;max-width:440px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,.28)">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px">↓ Import Client</div>
+    <div id="importClientInfo" style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6"></div>
+    <div id="importClientConflict" style="display:none;padding:10px 13px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:12px;color:#92400e;margin-bottom:14px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-outline" onclick="closeImportClientModal()" style="font-size:13px">Cancel</button>
+      <button class="btn btn-primary" id="importClientConfirmBtn" onclick="confirmImportClient()" style="font-size:13px">Import</button>
+    </div>
+  </div>
+</div>
+  <!-- ══════════ MONTHLY SUMMARY TAB ══════════ -->
+  <div id="tab-monthly" style="display:none">
+
+    <!-- OFFICEPUZZLE WORKFLOW CARD -->
+    <div class="card" style="border-color:#7c3aed;background:linear-gradient(135deg,rgba(124,58,237,.07),rgba(139,92,246,.03))">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:18px">&#128279;</span>
+        <span style="font-family:var(--mono);font-size:10px;font-weight:700;color:#7c3aed;letter-spacing:.1em">OFFICEPUZZLE WORKFLOW</span>
+      </div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.65;margin-bottom:12px">
+        If you have <strong style="color:#7c3aed">Claude in Chrome</strong> installed, open OfficePuzzle in your browser, navigate to the client's notes for the month, and paste the prompt below into the Claude side panel. Claude will read the notes and bring the data here — <strong>read-only, no changes made to OfficePuzzle.</strong>
+      </div>
+      <div id="opPromptBox" style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:11px 13px;font-size:11px;font-family:var(--mono);color:var(--text2);line-height:1.7;white-space:pre-wrap;margin-bottom:8px">Loading prompt...</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="copyOPPrompt()" style="font-size:11px;padding:5px 14px;border-color:#7c3aed;color:#7c3aed">Copy prompt for Claude in Chrome</button>
+        <button class="btn btn-outline" onclick="document.getElementById('opSetupInfo').style.display=document.getElementById('opSetupInfo').style.display==='none'?'block':'none'" style="font-size:11px;padding:5px 14px">How to set up</button>
+      </div>
+      <div id="opSetupInfo" style="display:none;margin-top:10px;padding:10px 13px;background:var(--bg);border-radius:6px;font-size:11px;color:var(--text2);line-height:1.7">
+        <strong>1.</strong> Go to <a href="https://chromewebstore.google.com/search/claude" target="_blank" style="color:#7c3aed">Chrome Web Store</a> and install "Claude for Chrome" by Anthropic.<br>
+        <strong>2.</strong> Sign in with your Claude account (Pro or higher required).<br>
+        <strong>3.</strong> Pin the extension — click the puzzle piece icon in Chrome toolbar, then the thumbtack next to Claude.<br>
+        <strong>4.</strong> Open OfficePuzzle, navigate to the client and month.<br>
+        <strong>5.</strong> Click the Claude icon to open the side panel.<br>
+        <strong>6.</strong> Paste the prompt above. Claude will read the page and return the data — then paste it in the field below.
+      </div>
+    </div>
+
+    <div style="padding:8px 14px;background:var(--blue3);border:1px solid var(--border2);border-radius:6px;margin-bottom:1rem;font-size:12px;color:var(--text2);line-height:1.6">
+      Paste all documentation for the month: analyst session notes, caregiver training notes, RBT direct treatment notes, and the monthly data report from OfficePuzzle. Paste everything together — the system extracts Plans, behavior frequencies, replacement program accuracy, protocol modifications, caregiver training progress, and plan changes, then generates a formal Monthly Progress Summary for the medical record.
+    </div>
+
+    <div class="card">
+      <div class="card-title">Session Details</div>
+      <div class="row3" style="margin-bottom:10px">
+        <div class="field">
+          <label>Client</label>
+          <select id="mthClientSel" onchange="onMthClientChange()" style="width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+            <option value="">— select client —</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Month / Year</label>
+          <input type="month" id="mthPeriod" oninput="updateOPPrompt()" style="width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+        </div>
+        <div class="field">
+          <label>Supervisor credential</label>
+          <select id="mthCred" style="width:100%;padding:6px 9px;border:1px solid var(--border2);border-radius:5px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)">
+            <option value="BCBA">BCBA</option>
+            <option value="BCBA-D">BCBA-D</option>
+            <option value="BCaBA">BCaBA</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Monthly Documentation</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+        Provide any combination of: analyst session notes, RBT direct treatment notes, caregiver training notes, and monthly data report from OfficePuzzle.
+        Upload files <strong>or</strong> paste text directly below — the system extracts and organizes everything.
+      </div>
+      <!-- FILE UPLOAD ROW -->
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        <label style="flex:1;min-width:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:10px 8px;border:1px dashed var(--border2);border-radius:6px;cursor:pointer;font-size:11px;color:var(--text3);text-align:center;transition:border-color .2s" id="mthUploadNotesLbl">
+          <span style="font-size:18px">&#128196;</span>
+          <span>Session Notes (97155 + 97156)</span>
+          <span id="mthFileNotesName" style="font-size:10px;color:var(--blue);display:none"></span>
+          <input type="file" id="mthFileNotes" accept=".pdf,.txt,.docx" multiple style="display:none" onchange="mthHandleFile(this,'notes')">
+        </label>
+        <label style="flex:1;min-width:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:10px 8px;border:1px dashed var(--border2);border-radius:6px;cursor:pointer;font-size:11px;color:var(--text3);text-align:center;transition:border-color .2s" id="mthUploadDataLbl">
+          <span style="font-size:18px">&#128202;</span>
+          <span>Monthly Data</span>
+          <span id="mthFileDataName" style="font-size:10px;color:var(--blue);display:none"></span>
+          <input type="file" id="mthFileData" accept=".pdf,.txt,.csv" multiple style="display:none" onchange="mthHandleFile(this,'data')">
+        </label>
+        <label style="flex:1;min-width:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:10px 8px;border:1px dashed var(--border2);border-radius:6px;cursor:pointer;font-size:11px;color:var(--text3);text-align:center;transition:border-color .2s" id="mthUploadRbtLbl">
+          <span style="font-size:18px">&#128226;</span>
+          <span>RBT Situations</span>
+          <span id="mthFileRbtName" style="font-size:10px;color:var(--blue);display:none"></span>
+          <input type="file" id="mthFileRbt" accept=".pdf,.txt,.docx" multiple style="display:none" onchange="mthHandleFile(this,'rbt')">
+        </label>
+        <button class="btn btn-outline" onclick="mthClearFiles()" style="font-size:11px;padding:6px 12px;align-self:center" title="Clear uploaded files">&#10005; Clear files</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Or paste text directly:</div>
+      <textarea id="mthDocText" rows="12" placeholder="Paste here all the month's session notes (97155 and 97156 together, in one block — each note identifies itself) + OfficePuzzle monthly data." style="width:100%;padding:9px 11px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);resize:vertical;line-height:1.65;box-sizing:border-box"></textarea>
+    </div>
+
+    <div class="card">
+      <div class="card-title">RBT Situations This Month <span style="font-size:10px;color:var(--text3);font-weight:400">(environmental changes / important situations)</span></div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5">
+        Situations reported by the RBT(s) during the month — environmental changes at home, disruptions to routine, or other important events. Upload files with the “RBT Situations” button above, or write the month's main points below. This is woven into the summary as situational context only; it is never used as a source of clinical data or treatment goals.
+      </div>
+      <textarea id="mthRbtSituations" rows="4" placeholder="e.g. Mid-month the family moved to a new apartment; a new sibling joined the household; a caregiver was temporarily absent for two weeks..." style="width:100%;padding:9px 11px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);resize:vertical;line-height:1.65;box-sizing:border-box"></textarea>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Supplemental Information <span style="font-size:10px;color:var(--text3);font-weight:400">(optional)</span></div>
+      <textarea id="mthNotes" rows="3" placeholder="Add anything not in the report: supervision observations, caregiver feedback, emerging behaviors noted informally, level of care recommendation changes..." style="width:100%;padding:9px 11px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);resize:vertical;line-height:1.65;box-sizing:border-box"></textarea>
+      <div style="margin-top:14px">
+        <label style="font-size:11px;font-weight:600;color:#7c3aed;font-family:var(--mono);letter-spacing:.04em;display:block;margin-bottom:4px">CLINICAL NOTES FOR THE SUMMARY</label>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px;line-height:1.5">Free text — any specific instruction for writing the monthly summary: protocol modifications to highlight, specific areas of progress or concern, level of care recommendations, particular language to use or avoid, or anything the model should consider beyond the data report.</div>
+        <textarea id="mthClinicalNotes" rows="3" placeholder="e.g. Highlight the protocol modification for aggression made in week 3. Include recommendation for increased supervision frequency. Caregiver expressed difficulty maintaining DRO intervals consistently at home..." style="width:100%;padding:9px 11px;border:1px solid rgba(124,58,237,.35);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);resize:vertical;line-height:1.65;box-sizing:border-box"></textarea>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+      <button class="btn btn-primary" onclick="_lockDuring('generateMonthlySummary','la generación del monthly','mthClientSel')" id="mthGenBtn" style="padding:10px 28px;font-size:13px">
+        <span class="spinner" id="mthSpinner" style="display:none"></span>Generate Monthly Summary
+      </button>
+      <button class="btn btn-outline" onclick="clearMonthlySummary()" style="font-size:12px">Clear</button>
+    </div>
+    <div class="msg" id="mthMsg"></div>
+
+    <div id="mthOutput" style="display:none">
+      <div class="card" style="border-color:var(--blue)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--blue);letter-spacing:.1em">MONTHLY CLINICAL SUMMARY</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-outline" onclick="copyMthSummary()" style="font-size:11px;padding:4px 12px">Copy</button>
+            <button class="btn btn-secondary" onclick="_lockDuring('generateMonthlySummary','la generación del monthly','mthClientSel')" style="font-size:11px;padding:4px 12px">Regenerate</button>
+          </div>
+        </div>
+        <div id="mthResult" contenteditable="true" style="background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:14px 16px;font-size:13px;line-height:1.75;color:var(--text);white-space:pre-wrap;min-height:120px"></div>
+      </div>
+    </div>
+
+  </div><!-- end monthly tab -->
+
+  <div id="tab-abamatrix" style="display:none">
+    <div class="card">
+      <h2 style="margin-top:0">AbaMatrix</h2>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;line-height:1.5">Rellena las plantillas de AbaMatrix por cliente. El sistema elige SOLO de las listas cerradas de AbaMatrix (nunca inventa); lo que marcas tú queda a tu criterio. Requiere el assessment reducido guardado del cliente.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px">
+        <div class="field"><label>Therapist</label><select id="abaTherapistSel" onchange="_abaRefreshClientSelect()"></select></div>
+        <div class="field"><label>Client</label><select id="abaClientSel" onchange="_abaOnClientChange()"></select></div>
+      </div>
+
+      <div id="abaSetupBox" style="margin-top:12px;padding:10px 14px;border:1px solid var(--border2);border-radius:6px;background:var(--surface)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="font-size:12px;font-weight:600;color:var(--text2)">Preparación de este cliente</div>
+          <span id="abaSetupScore" style="font-size:11px;font-family:var(--mono)"></span>
+        </div>
+        <div id="abaSetupList" style="font-size:11px;margin-top:6px;line-height:1.7"></div>
+      </div>
+
+      <!-- VALIDACIÓN DE LO ACTIVO — antes de que el sistema elija nada -->
+      <div style="margin-top:12px;padding:12px 14px;border:2px solid var(--amber,#b86c00);border-radius:6px;background:var(--surface)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="font-size:12px;font-weight:600;color:var(--text2)">1 · Confirma qué está en curso</div>
+          <span id="abaActiveCount" style="font-size:11px;color:var(--text3);font-family:var(--mono)"></span>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin:4px 0 8px;line-height:1.5">
+          El JSON de AbaMatrix trae TODO lo que el cliente ha tenido alguna vez, incluido lo masterizado y lo retirado.
+          Marca aquí lo que de verdad se está trabajando: el sistema sólo elegirá de entre lo marcado.
+          Se propone desde el estado de la ficha, y tu decisión manda y queda guardada para este cliente.
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn btn-outline" style="padding:4px 10px;font-size:10px" onclick="_abaActiveFromCard()">Volver al estado de la ficha</button>
+          <button class="btn btn-outline" style="padding:4px 10px;font-size:10px" onclick="_abaActiveSetAll(true)">Marcar todo</button>
+          <button class="btn btn-outline" style="padding:4px 10px;font-size:10px" onclick="_abaActiveSetAll(false)">Desmarcar todo</button>
+        </div>
+        <div id="abaActiveBox" style="font-size:11px;line-height:1.6"></div>
+      </div>
+
+      <div style="margin-top:12px;padding:12px 14px;border:2px solid var(--blue);border-radius:6px;background:var(--surface)">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">2 · Generar todo</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px;line-height:1.5">Completa abajo solo lo que decides tú (lugares, personas presentes, cambio de entorno, incidentes). Luego pulsa aquí: el sistema genera todo lo demás (prompt de inicio, manipulación, conductas, metas, participación y cierre) y arma la forma de AbaMatrix campo por campo. Nada queda sin marcar.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" id="abaAllBtn" onclick="_lockDuring('_abaGenerateAll','la generación del lote de AbaMatrix','aba')" disabled style="padding:7px 18px;font-size:12px">Generar forma de AbaMatrix</button>
+          <span id="abaAllProg" style="font-size:11px;color:var(--blue);font-weight:600"></span>
+        </div>
+        <label style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--text2);margin-top:8px;cursor:pointer">
+          <input type="checkbox" id="abaWantNote" onchange="_abaSaveWantNote()">
+          Redactar además la nota 97153 en prosa
+        </label>
+        <div style="font-size:10px;color:var(--text3);margin-top:2px;line-height:1.5">AbaMatrix redacta la nota por su cuenta una vez seleccionados los parámetros, así que normalmente basta con la forma. Redactarla aquí añade la llamada más costosa de todo el proceso: márcala solo si necesitas el texto en prosa.</div>
+        <div id="abaAllReq" style="font-size:10px;margin-top:6px;color:var(--text3)"></div>
+      </div>
+
+      <details id="abaUponArrival" open style="margin-top:1rem;border:1px solid var(--border2);border-radius:6px;padding:12px 16px;background:var(--surface)">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text2)">Upon Arrival (RBT)</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-top:10px">
+          <div class="field"><label style="font-size:11px">Start location</label><select id="abaStartLoc" onchange="_abaUpdateParentPresent();_abaCheckReady()"></select></div>
+          <div class="field"><label style="font-size:11px">End location</label><select id="abaEndLoc" onchange="_abaCheckReady()"></select></div>
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label style="font-size:11px">Otros lugares de este cliente (código 99 — separados por coma; se guardan solo para este cliente y aparecen en las listas de arriba)</label>
+          <input type="text" id="abaOtherLocs" onchange="_abaSaveOtherLocs()" placeholder="e.g. Daycare summer camp">
+          <div id="abaOtherLocPreview" style="font-size:10px;color:var(--text3);margin-top:4px"></div>
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label style="font-size:11px">Personas posibles de este cliente (lista, separadas por coma — se guarda por cliente)</label>
+          <input type="text" id="abaRoster" onchange="_abaSaveRoster();_abaCheckReady()" placeholder="e.g. Mother, Father, Grandmother">
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label style="font-size:11px">Who was present during the service? — Caregiver(s) (marca una o varias; obligatorio)</label>
+          <div id="abaPresentBoxes" style="display:flex;gap:12px;flex-wrap:wrap;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);font-size:12px"></div>
+        </div>
+        <div style="font-size:11px;margin-top:8px;padding:6px 8px;background:var(--bg);border:1px solid var(--border2);border-radius:4px"><b>Parent/guardian present (derivado del Start location):</b> <span id="abaParentOut" style="color:var(--blue)"></span></div>
+        <div class="field" style="margin-top:10px">
+          <label style="font-size:11px">1 · Significant changes to the environment? (lo eliges tú)</label>
+          <select id="abaEnvYesNo" onchange="_abaOnEnvYesNo();_abaCheckReady()"><option value="No">No</option><option value="Yes">Yes</option></select>
+        </div>
+        <div class="field" id="abaEnvChangeWrap" style="margin-top:8px;display:none"><label style="font-size:11px">Environmental change (selecciona)</label><select id="abaEnvChange" onchange="_abaCheckReady()"></select></div>
+        <div id="abaManipRow" style="display:none;margin-top:8px">
+          <div style="font-size:11px">
+            <span style="color:var(--text3)">Manipulation (la propone el sistema):</span>
+            <span id="abaManipOut" style="color:var(--text2)"></span>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:11px">
+          <span style="color:var(--text3)">Prompt at the start of the service (lo selecciona el sistema):</span>
+          <span id="abaPromptOut" style="color:var(--text2)"></span>
+        </div>
+        </div>
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Client Participation</div>
+        <div style="font-size:11px;margin-top:4px">
+          <span style="color:var(--text3)">How was the client’s participation during service (lo selecciona el sistema):</span>
+          <div id="abaPartOut" style="color:var(--text2);margin-top:3px"></div>
+        </div>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Incidents &amp; Medical Concerns <span style="font-weight:400;color:var(--text3);font-size:10px">(los marcas tú — son hechos de la sesión, el sistema no los deduce)</span></div>
+          <div class="field">
+            <label style="font-size:11px">Were there any incidents during the service?</label>
+            <select id="abaIncYesNo" onchange="_abaOnIncYesNo();_abaCheckReady()"><option value="No">No</option><option value="Yes">Yes</option></select>
+          </div>
+          <div class="field" id="abaIncWrap" style="display:none;margin-top:6px">
+            <label style="font-size:11px">Especifica el incidente</label>
+            <textarea id="abaIncText" rows="2" oninput="_abaCheckReady()" placeholder="Describe el incidente ocurrido durante el servicio" style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)"></textarea>
+          </div>
+          <div class="field" style="margin-top:8px">
+            <label style="font-size:11px">Were there any medical concerns?</label>
+            <select id="abaMedYesNo" onchange="_abaOnMedYesNo();_abaCheckReady()"><option value="No">No</option><option value="Yes">Yes</option></select>
+          </div>
+          <div id="abaMedWrap" style="display:none;margin-top:6px">
+            <div class="field">
+              <label style="font-size:11px">Medical concern (lista)</label>
+              <select id="abaMedSel" onchange="_abaOnMedSel();_abaCheckReady()"></select>
+            </div>
+            <div class="field" id="abaMedOtherWrap" style="display:none;margin-top:6px">
+              <label style="font-size:11px">Otro (especifica)</label>
+              <input type="text" id="abaMedOther" oninput="_abaCheckReady()" placeholder="Escribe la preocupación médica que no está en la lista">
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Behavior Reduction</div>
+          <details id="abaCfgDetails" style="margin-bottom:8px">
+            <summary style="cursor:pointer;font-size:11px;color:var(--text3)">Configuración AbaMatrix de este cliente (subir JSON)</summary>
+            <div style="font-size:10px;color:var(--text3);margin:6px 0 6px;line-height:1.5">Sube el JSON del cliente. Trae sus conductas, "Evidenced By", funciones por conducta, intervenciones por función, metas, procedimientos de enseñanza y esquemas de reforzamiento. Se guarda en Supabase para este cliente.</div>
+            <label class="btn btn-outline" style="padding:5px 12px;font-size:11px;cursor:pointer">1 · Subir JSON del Daily Log<input type="file" id="abaCfgFile" accept=".json" style="display:none" onchange="_abaLoadConfigFile(this)"></label>
+            <label class="btn btn-outline" style="padding:5px 12px;font-size:11px;cursor:pointer;margin-left:6px">2 · Subir JSON clinico (Skills &amp; Behaviors)<input type="file" id="abaClinFile" accept=".json" style="display:none" onchange="_abaLoadClinicalFile(this)"></label>
+            <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5">El primero trae las listas cerradas que ofrece la plataforma. El segundo trae funciones, topografia y el catalogo de intervenciones, y marca como Mastered lo que ya no se ensena. Se complementan: sube los dos.</div>
+            <div id="abaJsonState" style="font-size:11px;margin-top:8px;line-height:1.7"></div>
+            <div id="abaEvidInfo" style="font-size:10px;color:var(--text3);margin-top:6px"></div>
+            <div id="abaDefects" style="display:none;font-size:11px;margin-top:8px;padding:8px 10px;border-left:3px solid var(--amber,#d97706);background:rgba(217,119,6,.07);border-radius:0 4px 4px 0;line-height:1.6"></div>
+          </details>
+
+          <details id="mfcDetails" style="margin-bottom:10px;border:1px solid var(--border2);border-radius:6px;padding:8px">
+            <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text2)">Mapa Funcional del Cliente (MFC) — validación del analista</summary>
+            <div style="font-size:10px;color:var(--text3);margin:8px 0;line-height:1.5">Tabla por cliente que el BCBA valida: para cada conducta, su función, los reemplazos permitidos, los reforzadores permitidos POR FUNCIÓN y las intervenciones permitidas. Sin un MFC validado, la nota 97153 no se genera. Los reforzadores deben ser de la misma moneda que la función (atención→atención social; escape→break/retirar demanda; tangible→acceso al ítem; automática→alternativa emparejada).</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <div class="field" style="flex:1;min-width:200px">
+                <label style="font-size:11px">Documento fuente (sourceDoc) — obligatorio</label>
+                <input type="text" id="mfcSourceDoc" placeholder="p. ej. Reassessment 2026-05-16" style="width:100%;box-sizing:border-box;font-size:11px;padding:6px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)">
+              </div>
+              <div class="field" style="flex:1;min-width:160px">
+                <label style="font-size:11px">Validado por (BCBA) — obligatorio</label>
+                <input type="text" id="mfcValidatedBy" placeholder="Nombre del BCBA" style="width:100%;box-sizing:border-box;font-size:11px;padding:6px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)">
+              </div>
+            </div>
+            <div class="btn-row" style="margin-bottom:8px">
+              <button class="btn btn-outline" onclick="_mfcDerive()" style="padding:5px 12px;font-size:11px">Derivar del assessment/config</button>
+              <button class="btn btn-primary" onclick="_mfcSave()" style="padding:5px 12px;font-size:11px">Validar y guardar MFC</button>
+            </div>
+            <div id="mfcEditor" style="font-size:11px"></div>
+            <div class="msg" id="mfcMsg"></div>
+          </details>
+
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <label for="abaQuotaMal" style="font-size:11px;color:var(--text2)">Maladaptives por sesión</label>
+            <input type="number" id="abaQuotaMal" min="1" max="8" step="1" onchange="_abaSaveQuota()"
+                   style="width:60px;font-size:11px;padding:5px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)">
+            <span id="abaQuotaMalSrc" style="font-size:10px;color:var(--text3)"></span>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:6px">Cada agencia fija su propia cantidad. El sistema desarrolla ese número de conductas por nota, rotando entre notas para no repetir.</div>
+          <div style="font-size:11px;color:var(--text3)"><span id="abaBrProg"></span></div>
+          <div id="abaBrOut" style="font-size:11px;color:var(--text2);margin-top:8px;white-space:pre-wrap"></div>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Goal Implementation</div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <label for="abaQuotaGoal" style="font-size:11px;color:var(--text2)">Goals por sesión</label>
+            <input type="number" id="abaQuotaGoal" min="1" max="8" step="1" onchange="_abaSaveQuota()"
+                   style="width:60px;font-size:11px;padding:5px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)">
+            <span id="abaQuotaGoalSrc" style="font-size:10px;color:var(--text3)"></span>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:6px">Cada agencia fija su propia cantidad. El sistema desarrolla ese número de metas por nota, rotando entre notas para no repetir.</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+            <button class="btn btn-outline" style="padding:4px 11px;font-size:10px" onclick="_abaTogglePickGoals()">Elegir las metas de esta sesión</button>
+            <span id="abaPickGoalsInfo" style="font-size:10px;color:var(--text3)"></span>
+          </div>
+          <div id="abaPickGoalsBox" style="display:none;margin-bottom:8px;padding:8px 10px;border:1px solid var(--border2);border-radius:5px;background:var(--bg);font-size:11px;line-height:1.6"></div>
+          <div style="font-size:11px;color:var(--text3)"><span id="abaGiProg"></span></div>
+          <div id="abaGiOut" style="font-size:11px;color:var(--text2);margin-top:8px;white-space:pre-wrap"></div>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:1px dashed var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Relevant Information / Comments &amp; Next Visit</div>
+          <div style="font-size:11px;color:var(--text3)"><span id="abaClosProg"></span></div>
+          <div id="abaClosOut" style="font-size:11px;color:var(--text2);margin-top:8px;white-space:pre-wrap"></div>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:2px solid var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Forma de AbaMatrix (valores por campo)</div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:6px">Los valores asignados a cada campo, en el orden de las secciones de AbaMatrix. Lo que falte aparece marcado como [FALTA].</div>
+          <div class="btn-row"><button class="btn btn-outline" onclick="_abaBuildUponArrival()" style="padding:6px 16px;font-size:12px">Rearmar forma</button><button class="btn btn-outline" onclick="_abaCopyOutput()" style="padding:6px 14px;font-size:12px">Copiar forma</button></div>
+        <textarea id="abaOutput" rows="20" readonly style="width:100%;box-sizing:border-box;font-size:11px;font-family:var(--mono);padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text);margin-top:8px"></textarea>
+        <div class="msg" id="abaMsg"></div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:2px solid var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Nota 97153 (RBT)</div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:8px;line-height:1.5">Genera la nota narrativa a partir de TODO lo armado arriba y del assessment reducido, con las reglas del sistema. Arma primero las secciones anteriores.</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-primary" id="abaNoteBtn" onclick="_lockDuring('_abaGenerate97153','la generación de la nota 97153','aba')" style="padding:6px 16px;font-size:12px">Generar nota 97153</button>
+            <button class="btn btn-outline" id="abaAuditBtn" onclick="_lockDuring('_abaAuditNote','la auditoría de la nota','aba')" style="padding:6px 14px;font-size:12px">Auditar nota</button>
+            <button class="btn btn-outline" onclick="_abaCopyNote()" style="padding:6px 14px;font-size:12px">Copiar nota</button>
+            <span id="abaNoteProg" style="font-size:11px;color:var(--text3)"></span>
+          </div>
+          <textarea id="abaNoteOut" rows="14" style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text);margin-top:8px"></textarea>
+          <div id="abaAuditOut" style="font-size:11px;margin-top:8px;white-space:pre-wrap;line-height:1.6"></div>
+        </div>
+
+        <div style="margin-top:14px;padding-top:10px;border-top:2px solid var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Reescribir nota de AbaMatrix</div>
+          <div style="font-size:10px;color:var(--text3);margin-bottom:8px;line-height:1.5">Pega aquí una nota ya generada por AbaMatrix. El sistema la reescribe restringida a las listas cerradas de ESTE cliente y al assessment reducido, cuidando la correspondencia antecedente\u2013conducta\u2013consecuencia (ABC) y las reglas clínicas. No introduce nada fuera de lo que hay.</div>
+          <textarea id="abaRewriteIn" rows="10" placeholder="Pega aquí la nota de AbaMatrix a reescribir..." style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <button class="btn btn-primary" id="abaRewriteBtn" onclick="_lockDuring('_abaRewriteNote','la reescritura de la nota','aba')" style="padding:6px 16px;font-size:12px">Reescribir</button>
+            <button class="btn btn-outline" onclick="(function(){var t=document.getElementById('abaRewriteOut');if(t&&t.value){navigator.clipboard.writeText(t.value);}})()" style="padding:6px 14px;font-size:12px">Copiar</button>
+            <span id="abaRewriteProg" style="font-size:11px;color:var(--text3)"></span>
+          </div>
+          <textarea id="abaRewriteOut" rows="14" style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text);margin-top:8px"></textarea>
+          <div id="abaRewriteFlags" style="font-size:11px;margin-top:8px;white-space:pre-wrap;line-height:1.6;color:var(--text3)"></div>
+        </div>
+
+      </details>
+    </div>
+  </div>
+
+  <div id="tab-review" style="display:none">
+    <div class="card">
+      <h2 style="margin-top:0">Revisar nota de RBT</h2>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:12px;line-height:1.5">Selecciona el terapeuta y el cliente, pega la nota 97153 del RBT (venga de donde venga) y el sistema la revisa contra la información de ESE cliente: reglas clínicas, terminología prohibida, cero fabricación, correspondencia reforzador\u2013función (MFC) y §59G-4.125. Con "Revisar nota" obtienes OK o sugerencias; con "Reescribir con correcciones" el sistema devuelve la misma nota con los errores corregidos (sin inventar nada, solo con la info del cliente).</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 12px">
+        <div class="field"><label>Therapist</label><select id="reviewTherapistSel" onchange="_reviewRefreshClientSelect()"></select></div>
+        <div class="field"><label>Client</label><select id="reviewClientSel" onchange="_reviewOnClientChange()"></select></div>
+      </div>
+
+      <div style="margin-top:14px">
+        <textarea id="reviewNoteIn" rows="14" placeholder="Pega aquí la nota del RBT a revisar..." style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+          <button class="btn btn-primary" id="reviewBtn" onclick="_lockDuring('_abaReviewRbtNote','la revisión de la nota del RBT','review')" style="padding:6px 16px;font-size:12px">Revisar nota</button>
+          <button class="btn btn-outline" id="reviewRewriteBtn" onclick="_lockDuring('_reviewRewriteNote','la reescritura de la nota del RBT','review')" style="padding:6px 16px;font-size:12px">Reescribir con correcciones</button>
+          <span id="reviewProg" style="font-size:11px;color:var(--text3)"></span>
+        </div>
+        <div id="reviewNoteOut" style="font-size:11px;margin-top:8px;white-space:pre-wrap;line-height:1.6"></div>
+        <div class="msg" id="reviewMsg"></div>
+      </div>
+
+      <div style="margin-top:14px;padding-top:10px;border-top:2px solid var(--border2)">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Nota reescrita (con errores corregidos)</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:8px;line-height:1.5">Resultado de "Reescribir con correcciones". Revisa siempre antes de usarla: el sistema corrige contra la info del cliente, pero la decisión clínica es tuya.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <button class="btn btn-outline" onclick="(function(){var t=document.getElementById('reviewRewriteOut');if(t&&t.value){navigator.clipboard.writeText(t.value);}})()" style="padding:6px 14px;font-size:12px">Copiar</button>
+          <span id="reviewRewriteProg" style="font-size:11px;color:var(--text3)"></span>
+        </div>
+        <textarea id="reviewRewriteOut" rows="14" style="width:100%;box-sizing:border-box;font-size:11px;padding:8px;border:1px solid var(--border2);border-radius:4px;background:var(--bg);color:var(--text)"></textarea>
+        <div id="reviewRewriteFlags" style="font-size:11px;margin-top:8px;white-space:pre-wrap;line-height:1.6;color:var(--text3)"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end app -->
+
+<script>
+/*@JS@*/
+</script>
+<!-- SESSION REVIEW MODAL -->
+<div id="sessionReviewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:none;align-items:center;justify-content:center;padding:16px">
+  <div style="background:var(--surface);border-radius:12px;padding:18px 20px;max-width:560px;width:94%;box-shadow:0 8px 32px rgba(0,0,0,.18);font-family:var(--sans);margin:auto;max-height:92vh;overflow-y:auto;overscroll-behavior:contain">
+    <div style="font-family:var(--mono);font-size:13px;font-weight:600;color:var(--blue);letter-spacing:.05em;margin-bottom:3px">BEFORE GENERATING</div>
+    <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px">Confirm session details</div>
+
+    <div id="srClientRow" style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg);border-radius:7px;margin-bottom:6px">
+      <span style="font-size:18px">&#x1F464;</span>
+      <div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em">CLIENT</div>
+        <div id="srClientName" style="font-weight:600;font-size:14px;color:var(--text)"></div>
+      </div>
+    </div>
+
+    <div id="srDatePlaceAlert" style="display:none;padding:9px 13px;background:#fef3c7;border:1.5px solid #f59e0b;border-radius:7px;margin-bottom:5px;font-size:12px;color:#92400e;font-weight:500">
+      &#x26A0; Review the date and place below &#x2014; they may still be set to defaults. Correct them here before generating.
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:5px">
+      <div style="padding:6px 10px;background:var(--bg);border-radius:7px;border:2px solid transparent" id="srDateBox">
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em;margin-bottom:5px">DATE <span style="color:#f59e0b;font-size:9px" id="srDateFlag"></span></div>
+        <input type="date" id="srDate" style="width:100%;border:1px solid var(--border2);border-radius:5px;padding:5px 8px;font-size:13px;font-weight:600;font-family:var(--sans);background:var(--surface);color:var(--text);outline:none" oninput="onSrDateChange()">
+      </div>
+      <div style="padding:6px 10px;background:var(--bg);border-radius:7px;border:2px solid transparent" id="srPlaceBox">
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em;margin-bottom:5px">PLACE OF SERVICE <span style="color:#f59e0b;font-size:9px" id="srPlaceFlag"></span></div>
+        <select id="srPlace" style="width:100%;border:1px solid var(--border2);border-radius:5px;padding:5px 8px;font-size:13px;font-weight:600;font-family:var(--sans);background:var(--surface);color:var(--text);outline:none" oninput="onSrPlaceChange()">
+          <option value="Home (12)">Home (12)</option>
+          <option value="Office/Clinic (11)">Office/Clinic (11)</option>
+          <option value="School (03)">School (03)</option>
+          <option value="Community (99)">Community (99)</option>
+          <option value="Daycare (12)">Daycare (12)</option>
+          <option value="After School (99)">After School (99)</option>
+          <option value="Other (99)">Other (99)</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="srDurRows" style="margin-bottom:5px"></div>
+
+    <div id="srParticipants" style="padding:6px 10px;background:var(--bg);border-radius:7px;margin-bottom:5px">
+      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em;margin-bottom:2px">PARTICIPANTS PRESENT</div>
+      <div id="srParticipantsList" style="font-size:13px;color:var(--text)"></div>
+    </div>
+
+    <div id="srFreqSection" style="display:none;margin-bottom:6px">
+      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em;margin-bottom:6px">BEHAVIOR FREQUENCY COUNTS <span style="font-weight:400;color:var(--text3)">(optional &#x2014; enter observed occurrences)</span></div>
+      <div id="srFreqRows"></div>
+    </div>
+
+    <div id="srPrevPlanSection" style="display:none;margin-bottom:6px">
+      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em;margin-bottom:5px" id="srPrevPlanLabel">PREVIOUS SESSION NOTE <span style="font-weight:400;color:var(--text3)">(for plan continuity)</span></div>
+      <div style="font-size:11px;color:var(--text3);line-height:1.4;margin-bottom:5px" id="srPrevPlanDesc">Provide the previous session note for plan continuity &#x2014; choose one option:</div>
+      <!-- Auto-saved badge + clear -->
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <div id="srAutoplanBadge" style="font-size:10px;padding:3px 8px;border-radius:4px;background:var(--blue3);color:var(--blue);font-family:var(--mono);display:none">&#x2713; Auto-saved plan loaded</div>
+        <button class="btn btn-outline" onclick="srClearPrevNote()" style="font-size:10px;padding:3px 10px;color:var(--text3);border-color:var(--border2)">Clear</button>
+      </div>
+      <!-- File upload -->
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:5px;cursor:pointer;font-size:11px;color:var(--text2)">
+        <span style="padding:5px 12px;border:1px dashed var(--border2);border-radius:5px;font-size:11px;color:var(--text3)">&#128196; Upload previous note (PDF or TXT)</span>
+        <input type="file" id="srPrevNoteFile" accept=".pdf,.txt,.docx" style="display:none" onchange="srHandlePrevNoteFile(this)">
+        <span id="srPrevNoteFileName" style="font-size:10px;color:var(--blue);display:none"></span>
+      </label>
+      <!-- Paste textarea -->
+      <textarea id="srPrevPlan" rows="3" placeholder="Paste the previous session note here &#x2014; or use the Claude in Chrome prompt below to retrieve it." style="width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:6px;font-size:12px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans);resize:vertical;line-height:1.6;box-sizing:border-box;margin-bottom:6px"></textarea>
+      <!-- Claude in Chrome prompt -->
+      <div style="padding:6px 9px;background:linear-gradient(135deg,rgba(124,58,237,.06),rgba(139,92,246,.02));border:1px solid rgba(124,58,237,.25);border-radius:6px;font-size:11px;color:var(--text3);line-height:1.6">
+        <span style="color:#7c3aed;font-weight:600">Claude in Chrome:</span> Open OfficePuzzle, navigate to the previous session note for this client, open the Claude side panel, and paste this prompt:
+        <div id="srPrevNoteOPPrompt" style="margin-top:6px;font-family:var(--mono);font-size:10px;color:var(--text2);background:var(--bg);padding:7px 9px;border-radius:4px;white-space:pre-wrap;line-height:1.6"></div>
+        <button class="btn btn-outline" onclick="srCopyPrevNotePrompt()" style="margin-top:6px;font-size:10px;padding:4px 12px;border-color:#7c3aed;color:#7c3aed">Copy prompt</button>
+      </div>
+    </div>
+
+    <div id="srRepSection" style="display:none;margin-bottom:6px">
+      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.05em;margin-bottom:4px">REPLACEMENT PROGRAM TRIAL DATA <span style="font-weight:400;color:var(--text3)">(optional &#x2014; correct responses / total trials)</span></div>
+      <div id="srRepRows"></div>
+    </div>
+
+    <div id="srContextRow" style="display:none;padding:5px 9px;background:#fffbeb;border:1px solid #d97706;border-radius:7px;margin-bottom:5px;font-size:12px;color:#92400e">
+      <div id="srContextText"></div>
+    </div>
+
+    <div id="srWarnings" style="display:none;padding:7px 10px;background:#fdf0ee;border:1px solid var(--red);border-radius:7px;margin-bottom:8px;font-size:12px;color:var(--red)">
+      <div id="srWarningText"></div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:12px">
+      <button onclick="closeSessionReview()" style="flex:1;padding:8px;border:1px solid var(--border2);border-radius:7px;background:var(--surface);font-family:var(--sans);font-size:12px;cursor:pointer;color:var(--text2)">&#x2190; Go back</button>
+      <button id="srConfirmBtn" onclick="_lockDuring('confirmAndGenerate','la generación de la nota','genClientSel')" style="flex:2;padding:8px;border:none;border-radius:7px;background:var(--blue);color:white;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer">Confirm &amp; Generate</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- GOOGLE DRIVE SETUP MODAL -->
+<div id="driveSetupModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10001;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--surface);border-radius:14px;padding:24px 26px;max-width:580px;width:94%;max-height:88vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.25)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700;color:var(--text)">Google Drive Sync — Setup Guide</div>
+      <button onclick="document.getElementById('driveSetupModal').style.display='none'" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">&#x2715;</button>
+    </div>
+    <div style="font-size:12px;line-height:1.8;color:var(--text2)">
+      <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 13px;margin-bottom:14px;font-size:11px;color:#92400e">
+        <strong>&#x26A0; Requirement:</strong> The app must be served from an HTTP URL, not opened as a local file. 
+        The quickest option is to host it free on <strong>Netlify</strong> (drag-and-drop, 2 minutes) or <strong>GitHub Pages</strong>.
+      </div>
+
+      <div style="font-weight:700;color:var(--text);margin-bottom:6px;font-size:13px">Step 1 — Host the app (if not already)</div>
+      <div style="margin-bottom:12px">
+        Go to <strong>netlify.com</strong> &#x2192; Log in &#x2192; Drag your HTML file into the deploy area. 
+        Netlify gives you a URL like <code style="font-size:11px">https://your-app.netlify.app</code>. 
+        Bookmark that URL on all your devices.
+      </div>
+
+      <div style="font-weight:700;color:var(--text);margin-bottom:6px;font-size:13px">Step 2 — Create a Google Cloud project</div>
+      <div style="margin-bottom:12px">
+        Go to <a href="https://console.cloud.google.com" target="_blank" style="color:#1a73e8">console.cloud.google.com</a> &#x2192; 
+        Create a new project (name it anything, e.g. "ABA Notes") &#x2192; 
+        In the left menu go to <strong>APIs &amp; Services &#x2192; Library</strong> &#x2192; 
+        Search for "Google Drive API" &#x2192; Enable it.
+      </div>
+
+      <div style="font-weight:700;color:var(--text);margin-bottom:6px;font-size:13px">Step 3 — Create OAuth credentials</div>
+      <div style="margin-bottom:12px">
+        APIs &amp; Services &#x2192; <strong>Credentials</strong> &#x2192; Create Credentials &#x2192; 
+        <strong>OAuth client ID</strong> &#x2192; Application type: <strong>Web application</strong> &#x2192; 
+        Under "Authorized JavaScript origins" add your Netlify URL (e.g. <code style="font-size:11px">https://your-app.netlify.app</code>) &#x2192; 
+        Click Create &#x2192; Copy the <strong>Client ID</strong>.
+      </div>
+
+      <div style="font-weight:700;color:var(--text);margin-bottom:6px;font-size:13px">Step 4 — Configure OAuth consent screen</div>
+      <div style="margin-bottom:12px">
+        APIs &amp; Services &#x2192; <strong>OAuth consent screen</strong> &#x2192; 
+        User type: <strong>External</strong> &#x2192; Fill in app name (e.g. "ABA Clinical Notes") and your email &#x2192; 
+        Save &#x2192; Add scope: <code style="font-size:11px">https://www.googleapis.com/auth/drive.file</code> &#x2192; 
+        Add your email as a test user.
+      </div>
+
+      <div style="font-weight:700;color:var(--text);margin-bottom:6px;font-size:13px">Step 5 — Connect in the app</div>
+      <div>
+        Paste the <strong>Client ID</strong> into the field in the app &#x2192; Click Save &#x2192; Click 
+        "Connect Google Drive" &#x2192; Sign in with your Google account &#x2192; Done. 
+        All devices where you open the hosted URL and click Connect will share the same client data automatically.
+      </div>
+    </div>
+    <div style="margin-top:16px;text-align:right">
+      <button onclick="document.getElementById('driveSetupModal').style.display='none'" class="btn btn-secondary">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="noteViewerModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:99999; align-items:center; justify-content:center;">
+  <div style="background:#ffffff; width:90%; max-width:800px; max-height:90vh; border-radius:8px; display:flex; flex-direction:column; box-shadow: 0 10px 30px rgba(0,0,0,0.3); overflow:hidden;">
+    
+    <div style="padding:15px 20px; border-bottom:1px solid #dde3ee; display:flex; justify-content:space-between; align-items:center; background:#f4f6fb;">
+      <h3 id="noteViewerTitle" style="margin:0; font-size:16px; color:#1e2d3d; font-weight:600;">Clinical Note</h3>
+      <button onclick="closeNoteViewer()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#8899b0;">&times;</button>
+    </div>
+    
+    <div id="noteViewerBox" style="padding:20px; overflow-y:auto; flex-grow:1; white-space:pre-wrap; font-family: 'IBM Plex Sans', sans-serif; line-height:1.6; color:#1e2d3d;">
+      </div>
+    
+    <div style="padding:15px 20px; border-top:1px solid #dde3ee; background:#f4f6fb; display:flex; justify-content:space-between; align-items:center;">
+      <button id="noteViewerDelete" style="padding:8px 16px; background:#ffebee; color:#d32f2f; border:1px solid #ffcdd2; border-radius:4px; cursor:pointer; font-weight:500;">🗑️ Delete Note</button>
+      <div>
+        <button id="noteViewerCopy" style="padding:8px 16px; background:#2254b5; color:#ffffff; border:none; border-radius:4px; cursor:pointer; margin-right:10px; font-weight:500;">📋 Copy Note</button>
+        <button onclick="closeNoteViewer()" style="padding:8px 16px; background:#ffffff; color:#4a5f77; border:1px solid #c5cfe0; border-radius:4px; cursor:pointer; font-weight:500;">Close</button>
+      </div>
+    </div>
+    
+  </div>
+</div>
+
+</body>
+</html>

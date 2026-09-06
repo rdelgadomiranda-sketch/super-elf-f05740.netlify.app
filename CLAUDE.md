@@ -9,7 +9,15 @@ pase una auditoría de Florida Medicaid.
 - Todo el contenido clínico (notas, prompts, texto que ve el modelo): inglés.
 
 ## Cómo trabajar en el código (muy importante)
-- Ediciones QUIRÚRGICAS en el HTML: cambia solo lo necesario, no reescribas archivos enteros.
+- **El código fuente vive en `src/`. El HTML de la raíz se CONSTRUYE, no se edita a mano.**
+  - `src/index.html` — el marcado, con los marcadores `/*@CSS@*/` y `/*@JS@*/`.
+  - `src/styles.css` — los estilos.
+  - `src/js/NN-nombre.js` — 19 módulos numerados; se concatenan en orden alfabético.
+  - `node build.js` regenera `ABA_Notes_Generator_reglas_duras__fix_funcion.html`.
+  - `node build.js --check` avisa si el HTML del repo se ha quedado desfasado de `src/`.
+  - Lo que se despliega sigue siendo ESE ÚNICO HTML: la modularidad es para trabajar, no cambia el deploy.
+  - Si por lo que sea editas el HTML construido, hay que llevar el cambio a `src/` o el siguiente build lo borra.
+- Ediciones QUIRÚRGICAS: cambia solo lo necesario, no reescribas archivos enteros.
 - En el backend Flask: entrega archivos completos (no parches línea por línea).
 - Valida SIEMPRE el JavaScript con `node --check` antes de entregar. NO uses conteo de llaves.
 - Para lógica compleja, verifica por EJECUCIÓN: extrae la función y córrela en Node con datos de prueba. No te quedes en inspección del código.
