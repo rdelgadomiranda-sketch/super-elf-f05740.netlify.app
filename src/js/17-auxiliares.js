@@ -1895,11 +1895,14 @@ function _showRetryStatus(attempt, max, waitSec, status){
     el.style.cssText = 'position:fixed;bottom:16px;right:16px;background:#1e293b;color:#fbbf24;padding:10px 16px;border-radius:8px;z-index:99999;font-size:12px;font-family:var(--mono);box-shadow:0 4px 12px rgba(0,0,0,.3);max-width:300px;line-height:1.5';
     document.body.appendChild(el);
   }
-  // 429 is THIS user's own key hitting its rate limit or quota — actionable, and very
-  // different from 503, which is Google being overloaded and affects everyone. Saying
-  // "servers busy" for both hid a per-user quota problem behind a generic message.
+  /* El 429 es la cuota de la clave, no una saturación de Google (eso es el 503), y
+     conviene distinguirlos. Pero decía "TU clave, TU propia cuota", que era cierto
+     cuando cada terapista pegaba la suya y dejó de serlo al mover la llamada a la
+     Edge Function: hoy la clave es UNA, vive en el servidor y la comparte todo el
+     equipo. El mensaje mandaba a la gente a buscar una clave personal que no existe
+     y a recargar una cuenta que no es la que se agotó. */
   const cause = status === 429
-    ? 'Límite de tu clave de Gemini alcanzado (429): tu propia cuota, no los servidores'
+    ? 'Límite de la clave de Gemini alcanzado (429): es la cuota de la clave compartida del equipo, no los servidores de Google'
     : (status === 503 ? 'Servidores de Gemini saturados (503)'
     : (status ? 'Error temporal de Gemini (' + status + ')' : 'Reintentando'));
   el.textContent = `⏳ ${cause}. Reintento automático ${attempt+1} de ${max}, esperando ${waitSec}s…`;
